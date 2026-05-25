@@ -32,6 +32,21 @@ export const createOrder = createAsyncThunk(
   'orders/create',
   async (orderData, { rejectWithValue }) => {
     try {
+      // Guest orders: use plain fetch without auth header to avoid token errors
+      const isGuest = !localStorage.getItem('token');
+      if (isGuest) {
+        const res = await fetch(
+          `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/orders`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(orderData),
+          }
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Order failed');
+        return data.data;
+      }
       const { data } = await api.post('/orders', orderData);
       return data.data;
     } catch (err) { return rejectWithValue(extractError(err)); }

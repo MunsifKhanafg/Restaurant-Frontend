@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { login, clearError } from '../store/slices/authSlice';
+import { useRestaurant } from '../hooks/useRestaurant';
 import toast from 'react-hot-toast';
 
 // ── Shared Logo Component ──
@@ -33,10 +34,12 @@ export default function LoginPage() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { loading, error } = useSelector((s) => s.auth);
+  const { name: restaurantName } = useRestaurant();
   const [form, setForm] = useState({ email: '', password: '' });
+  const [guestName, setGuestName] = useState('');
+  const [showGuestInput, setShowGuestInput] = useState(false);
 
   // ── Staff/Admin manual sign-in ──
-  // The server returns the real role from the DB — we trust that, not the UI.
   const handleSubmit = async (e) => {
     e.preventDefault();
     dispatch(clearError());
@@ -44,7 +47,6 @@ export default function LoginPage() {
     if (login.fulfilled.match(result)) {
       const role = result.payload.data?.role;
       toast.success('Welcome back!');
-      // Role-based redirect: only real admins/managers reach the dashboard.
       if (role === 'admin' || role === 'manager') {
         navigate('/');
       } else {
@@ -55,30 +57,31 @@ export default function LoginPage() {
     }
   };
 
-  // ── Customer quick-login (waiter role — POS only) ──
-  // No admin shortcut exists. Admin must use the form above with their own credentials.
-  const handleCustomerLogin = async () => {
-    dispatch(clearError());
-    const result = await dispatch(login({
-      email: 'customer@aurumdining.com',
-      password: 'customer123',
-    }));
-    if (login.fulfilled.match(result)) {
-      toast.success('Welcome! Logged in as Customer');
-      navigate('/pos');
-    } else {
-      toast.error(result.payload || 'Login failed');
-    }
+  // ── Customer quick-access ──
+  const handleCustomerContinue = () => {
+    const name = guestName.trim() || 'Guest';
+    // Store guest name in sessionStorage so POSPage can read it
+    sessionStorage.setItem('guestName', name);
+    navigate('/guest');
   };
 
   return (
+    /* 
+      KEY FIX for mobile scroll:
+      - Use min-height instead of height so content can grow beyond viewport
+      - overflowY: 'auto' + WebkitOverflowScrolling: 'touch' for iOS
+      - alignItems: 'flex-start' so card doesn't get squished on small screens
+      - padding-bottom: 60px so the last button is never hidden behind browser chrome
+    */
     <div style={{
       minHeight: '100vh',
       background: 'var(--bg-base)',
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       justifyContent: 'center',
-      padding: '20px',
+      padding: '24px 16px 80px',
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
       backgroundImage:
         'radial-gradient(ellipse at 20% 50%, rgba(232,73,15,0.05) 0%, transparent 60%), ' +
         'radial-gradient(ellipse at 80% 20%, rgba(245,158,11,0.04) 0%, transparent 50%)',
@@ -92,11 +95,11 @@ export default function LoginPage() {
           </div>
           <h1 style={{
             fontFamily: '"Cormorant Garamond", serif', fontSize: '28px', fontWeight: '700',
-            background: 'linear-gradient(135deg, #E8C84A 0%, #D4AF37 50%, #B8960C 100%)',
+            backgroundImage: 'linear-gradient(135deg, #E8C84A 0%, #D4AF37 50%, #B8960C 100%)',
             WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
             backgroundClip: 'text', marginBottom: '4px', letterSpacing: '0.02em',
           }}>
-            Aurum Dining
+            {restaurantName || 'My Restaurant'}
           </h1>
           <p style={{ fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
             Staff Portal
@@ -179,7 +182,6 @@ export default function LoginPage() {
         </div>
 
         {/* ── Customer Quick-Access ── */}
-        {/* Admin has NO shortcut — they must sign in with their own credentials above */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '20px 0 14px' }}>
           <div style={{ flex: 1, height: '1px', background: 'rgba(212,175,55,0.15)' }} />
           <span style={{ fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
@@ -188,28 +190,67 @@ export default function LoginPage() {
           <div style={{ flex: 1, height: '1px', background: 'rgba(212,175,55,0.15)' }} />
         </div>
 
-        <button
-          onClick={handleCustomerLogin}
-          disabled={loading}
-          style={{
-            width: '100%', padding: '12px', borderRadius: '10px', fontSize: '13px',
-            fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer',
-            border: '1px solid rgba(212,175,55,0.35)',
-            background: 'rgba(212,175,55,0.07)', color: 'var(--gold)',
-            letterSpacing: '0.03em', transition: 'all 0.2s',
-            fontFamily: '"DM Sans", sans-serif',
-            opacity: loading ? 0.6 : 1,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-          }}
-          onMouseEnter={e => { if (!loading) e.currentTarget.style.background = 'rgba(212,175,55,0.14)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(212,175,55,0.07)'; }}
-        >
-          <span>🍽️</span>
-          <span>Continue as Customer</span>
-        </button>
+        {/* Guest name panel — expands when button clicked */}
+        {showGuestInput ? (
+          <div className="glass-card" style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+              👋 What's your name? (optional)
+            </p>
+            <input
+              className="input-dark"
+              placeholder="e.g. Ahmed"
+              value={guestName}
+              onChange={e => setGuestName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCustomerContinue()}
+              autoFocus
+              style={{ padding: '11px 14px', borderRadius: '8px', fontSize: '14px', width: '100%' }}
+            />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => setShowGuestInput(false)}
+                style={{
+                  flex: 1, padding: '11px', borderRadius: '8px', fontSize: '13px',
+                  fontWeight: '600', cursor: 'pointer',
+                  border: '1px solid rgba(212,175,55,0.25)',
+                  background: 'transparent', color: 'var(--text-muted)',
+                }}
+              >
+                Back
+              </button>
+              <button
+                onClick={handleCustomerContinue}
+                className="btn-gold"
+                style={{ flex: 2, padding: '11px', borderRadius: '8px', fontSize: '14px', fontWeight: '700' }}
+              >
+                🍽️ Continue to Menu
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowGuestInput(true)}
+            disabled={loading}
+            style={{
+              width: '100%', padding: '14px', borderRadius: '10px', fontSize: '14px',
+              fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer',
+              border: '1px solid rgba(212,175,55,0.35)',
+              background: 'rgba(212,175,55,0.07)', color: 'var(--gold)',
+              letterSpacing: '0.03em', transition: 'all 0.2s',
+              fontFamily: '"DM Sans", sans-serif',
+              opacity: loading ? 0.6 : 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              minHeight: '52px',
+            }}
+            onMouseEnter={e => { if (!loading) e.currentTarget.style.background = 'rgba(212,175,55,0.14)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(212,175,55,0.07)'; }}
+          >
+            <span style={{ fontSize: '18px' }}>🍽️</span>
+            <span>Continue as Customer</span>
+          </button>
+        )}
 
-        <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '20px' }}>
-          Aurum Dining &copy; {new Date().getFullYear()} — All rights reserved
+        <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '28px' }}>
+          {restaurantName || 'My Restaurant'} &copy; {new Date().getFullYear()} — All rights reserved
         </p>
       </div>
     </div>

@@ -44,9 +44,30 @@ const PrivateRoute = ({ children, roles }) => {
 };
 
 // ─────────────────────────────────────────────
+// GuestOrPrivateRoute — allows unauthenticated guests to access the POS page
+//   • guests (no token)  → render the page directly (customer self-order)
+//   • authenticated staff/admin → also render (normal POS access)
+//   • authenticated but wrong role → bounce to /pos (handled by parent PrivateRoute for other pages)
+// ─────────────────────────────────────────────
+const GuestOrPrivateRoute = ({ children, roles }) => {
+  const { user, token } = useSelector((s) => s.auth);
+
+  // No auth required for guest customers — show the page
+  if (!token || !user) return children;
+
+  // Authenticated: check role if provided
+  if (roles && !roles.includes(user.role)) {
+    return <Navigate to="/pos" replace />;
+  }
+
+  return children;
+};
+
+// ─────────────────────────────────────────────
 // RoleHome — what happens when someone hits "/"
 //   • admin / manager → Dashboard (full access)
 //   • everyone else   → POS (their only workspace)
+//   • unauthenticated → Login
 // ─────────────────────────────────────────────
 const RoleHome = () => {
   const { user, token } = useSelector((s) => s.auth);
@@ -79,8 +100,11 @@ function AppContent() {
         }}
       />
       <Routes>
-        {/* Public */}
+        {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />
+
+        {/* Guest / Customer self-order — no login required, opens POS directly */}
+        <Route path="/guest" element={<POSPage />} />
 
         {/* Protected shell */}
         <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
@@ -117,7 +141,7 @@ function AppContent() {
 
 function App() {
   return (
-    <Router>
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <RestaurantProvider>
         <ModalProvider>
           <AppContent />

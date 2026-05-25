@@ -1322,6 +1322,25 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════
+   MOBILE RESPONSIVENESS
+═══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .table-dark { font-size: 12px; }
+  .table-dark th, .table-dark td { padding: 10px 10px; }
+  .stat-card { padding: 14px 16px; }
+  .glass-card-elevated { border-radius: 12px; }
+  body { overflow-x: hidden; }
+  main { padding: 10px !important; }
+  /* Ensure modals don't overflow on small screens */
+  .glass-card-elevated { max-width: calc(100vw - 24px) !important; }
+  /* Make category pills scrollable horizontally */
+  .cat-pills-row { display: flex; overflow-x: auto; gap: 6px; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+  /* Better touch targets */
+  button { min-height: 36px; }
+  select, input { font-size: 16px !important; /* prevent iOS zoom */ }
+}
+
+/* ═══════════════════════════════════════════════════════
    CATEGORY PILL (POS filter)
 ═══════════════════════════════════════════════════════ */
 .cat-pill {

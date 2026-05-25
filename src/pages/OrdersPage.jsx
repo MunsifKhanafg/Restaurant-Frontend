@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { fetchOrders, updateOrderStatus } from '../store/slices/orderSlice';
 import { formatCurrency, formatDateTime, getStatusColor, printBill } from '../utils/helpers';
 import { useModal } from '../components/common/AppModal';
+import { useRestaurant } from '../hooks/useRestaurant';
 
 const STATUS_OPTIONS = ['received', 'confirmed', 'preparing', 'ready', 'delivered', 'completed', 'cancelled'];
 
@@ -11,9 +12,121 @@ const PAYMENT_LABELS = {
   cod: '📦 COD', jazzcash: '📱 JazzCash', easypaisa: '💚 Easypaisa', bankaccount: '🏦 Bank Account',
 };
 
+/* ────────────────────────────────────────────────────────────────────
+   PRINT EXTRAS DIALOG
+──────────────────────────────────────────────────────────────────── */
+const DEFAULT_EXTRAS = [
+  { id: 'bread', name: '🫓 Bread',        qty: 0, price: 80 },
+  { id: 'raita', name: '🫙 Raita',        qty: 0, price: 60 },
+  { id: 'water', name: '💧 Water Bottle', qty: 0, price: 50 },
+  { id: 'keri',  name: '🥭 Keri (Mango)', qty: 0, price: 40 },
+];
+
+function PrintExtrasDialog({ order, onClose, restaurantName }) {
+  const [extras, setExtras] = useState(
+    DEFAULT_EXTRAS.map(e => ({
+      ...e,
+      qty:   e.id === 'bread' && order.breadIncluded ? (order.breadCount || 1) : 0,
+      price: e.id === 'bread' && order.breadCharge
+        ? Math.round(order.breadCharge / Math.max(order.breadCount || 1, 1))
+        : e.price,
+    }))
+  );
+
+  const setQty   = (id, v) => setExtras(p => p.map(e => e.id === id ? { ...e, qty:   Math.max(0, parseInt(v)      || 0) } : e));
+  const setPrice = (id, v) => setExtras(p => p.map(e => e.id === id ? { ...e, price: Math.max(0, parseFloat(v)    || 0) } : e));
+
+  const extrasTotal = extras.reduce((s, e) => s + e.qty * e.price, 0);
+  const printOrder  = { ...order, breadIncluded: false, breadCharge: 0, _restaurantName: restaurantName };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:700,
+                  display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' }}>
+      <div className="glass-card-elevated"
+        style={{ width:'100%', maxWidth:'460px', maxHeight:'90vh', overflowY:'auto', padding:'28px' }}>
+
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+          <h2 style={{ fontFamily:'"Cormorant Garamond",serif', fontSize:'22px', color:'var(--gold)', margin:0 }}>
+            🗈️ Print Receipt
+          </h2>
+          <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text-muted)', fontSize:'22px', cursor:'pointer' }}>×</button>
+        </div>
+        <p style={{ fontSize:'12px', color:'var(--text-muted)', marginBottom:'20px' }}>
+          {order.billId} — Add any extras eaten before printing
+        </p>
+
+        <div style={{ fontSize:'11px', color:'var(--gold)', fontWeight:700, textTransform:'uppercase',
+                      letterSpacing:'0.1em', marginBottom:'10px' }}>Extras / Add-ons</div>
+
+        <div style={{ display:'flex', flexDirection:'column', gap:'8px', marginBottom:'20px' }}>
+          {extras.map(e => (
+            <div key={e.id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'10px 12px',
+                                     borderRadius:'10px', transition:'all 0.2s',
+                                     background: e.qty > 0 ? 'rgba(212,175,55,0.08)' : 'var(--bg-elevated)',
+                                     border:`1px solid ${e.qty > 0 ? 'rgba(212,175,55,0.35)' : 'var(--border)'}` }}>
+              <span style={{ fontSize:'14px', minWidth:'130px', fontWeight:600,
+                             color: e.qty > 0 ? 'var(--gold)' : 'var(--text-secondary)' }}>{e.name}</span>
+              <button onClick={() => setQty(e.id, e.qty - 1)}
+                style={{ width:28, height:28, borderRadius:6, border:'1px solid var(--border)',
+                         background:'var(--bg-surface)', color:'var(--text-primary)', cursor:'pointer', fontSize:14 }}>−</button>
+              <span style={{ minWidth:24, textAlign:'center', fontWeight:700, fontSize:15,
+                             color: e.qty > 0 ? 'var(--gold)' : 'var(--text-muted)' }}>{e.qty}</span>
+              <button onClick={() => setQty(e.id, e.qty + 1)}
+                style={{ width:28, height:28, borderRadius:6, border:'1px solid var(--border)',
+                         background:'var(--bg-surface)', color:'var(--text-primary)', cursor:'pointer', fontSize:14 }}>+</button>
+              <div style={{ display:'flex', alignItems:'center', gap:'4px', marginLeft:'auto' }}>
+                <span style={{ fontSize:'11px', color:'var(--text-muted)' }}>Rs.</span>
+                <input type="number" min="0" value={e.price} onChange={ev => setPrice(e.id, ev.target.value)}
+                  className="input-dark"
+                  style={{ width:'60px', padding:'4px 6px', borderRadius:'6px', fontSize:'12px', textAlign:'right' }} />
+              </div>
+              {e.qty > 0 && (
+                <span style={{ fontSize:'12px', color:'var(--gold)', fontWeight:700, minWidth:'70px', textAlign:'right' }}>
+                  = Rs.{(e.qty * e.price).toLocaleString()}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding:'14px', borderRadius:'10px', background:'var(--bg-elevated)',
+                      border:'1px solid var(--border)', marginBottom:'20px' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'6px' }}>
+            <span style={{ fontSize:'13px', color:'var(--text-muted)' }}>Order Total</span>
+            <span style={{ fontSize:'13px', color:'var(--text-secondary)' }}>{formatCurrency(order.totalAmount)}</span>
+          </div>
+          {extrasTotal > 0 && (
+            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'6px' }}>
+              <span style={{ fontSize:'13px', color:'var(--text-muted)' }}>Extras</span>
+              <span style={{ fontSize:'13px', color:'var(--gold)' }}>+ {formatCurrency(extrasTotal)}</span>
+            </div>
+          )}
+          <div style={{ display:'flex', justifyContent:'space-between', paddingTop:'8px',
+                        borderTop:'1px solid var(--border)', marginTop:'4px' }}>
+            <span style={{ fontSize:'16px', fontWeight:700, color:'var(--text-primary)' }}>GRAND TOTAL</span>
+            <span style={{ fontSize:'18px', fontWeight:700, color:'var(--gold)' }}>
+              {formatCurrency(order.totalAmount + extrasTotal)}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display:'flex', gap:'10px' }}>
+          <button className="btn-outline-gold" onClick={onClose}
+            style={{ flex:1, padding:'12px', borderRadius:'8px', fontSize:'13px' }}>Cancel</button>
+          <button className="btn-gold" onClick={() => { printBill(printOrder, extras); onClose(); }}
+            style={{ flex:2, padding:'12px', borderRadius:'8px', fontSize:'14px', fontWeight:700 }}>
+            🗈️ Print & Give to Customer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OrdersPage() {
   const dispatch = useDispatch();
   const showModal = useModal();
+  const { name: restaurantName } = useRestaurant();
   const { items: orders, loading } = useSelector((s) => s.orders);
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -22,6 +135,7 @@ export default function OrdersPage() {
   const [updatingId, setUpdatingId] = useState(null);
   const [payConfig, setPayConfig] = useState(null);
   const [payConfirmOrder, setPayConfirmOrder] = useState(null);
+  const [printOrder, setPrintOrder] = useState(null); // order to print with extras dialog
 
   useEffect(() => {
     fetch('/api/payment-config').then(r => r.json()).then(d => setPayConfig(d?.data || null)).catch(() => {});
@@ -56,31 +170,21 @@ export default function OrdersPage() {
     }
   };
 
-  // Build a printable order object from selectedOrder
-  const handlePrintOrder = (order) => {
-    const printableOrder = {
-      ...order,
-      billId: order.billId,
-      createdAt: order.createdAt,
-      orderType: order.orderType,
-      tableNumber: order.tableNumber,
-      customer: order.customer,
-      items: order.items || [],
-      subtotal: order.subtotal,
-      taxPercentage: order.taxPercentage,
-      taxAmount: order.taxAmount,
-      discountAmount: order.discountAmount || 0,
-      deliveryCharge: order.deliveryCharge || 0,
-      breadIncluded: order.breadIncluded || false,
-      breadCharge: order.breadCharge || 0,
-      totalAmount: order.totalAmount,
-      paymentMethod: order.paymentMethod,
-    };
-    printBill(printableOrder);
-  };
+  // Open extras dialog before printing
+  const handlePrintOrder = (order) => setPrintOrder(order);
+
+  const isMobile = window.innerWidth < 768;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Print Extras Dialog */}
+      {printOrder && (
+        <PrintExtrasDialog
+          order={printOrder}
+          restaurantName={restaurantName}
+          onClose={() => setPrintOrder(null)}
+        />
+      )}
       {/* Payment Details Modal */}
       {payConfirmOrder && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
@@ -148,25 +252,25 @@ export default function OrdersPage() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h1 style={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '28px', color: 'var(--text-primary)', marginBottom: '2px' }}>Orders</h1>
+          <h1 style={{ fontFamily: '"Cormorant Garamond", serif', fontSize: isMobile ? '22px' : '28px', color: 'var(--text-primary)', marginBottom: '2px' }}>Orders</h1>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{filtered.length} orders found</p>
         </div>
-        <button className="btn-outline-gold" onClick={() => dispatch(fetchOrders({ limit: 100 }))} style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px' }}>
+        <button className="btn-outline-gold" onClick={() => dispatch(fetchOrders({ limit: 100 }))} style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '13px' }}>
           🔄 Refresh
         </button>
       </div>
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <input className="input-dark" placeholder="Search by Bill ID, customer, table..." value={search} onChange={e => setSearch(e.target.value)}
-          style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '13px', flex: 1, minWidth: '200px' }} />
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <input className="input-dark" placeholder="Search bill ID, customer..." value={search} onChange={e => setSearch(e.target.value)}
+          style={{ padding: '8px 12px', borderRadius: '8px', fontSize: '13px', flex: 1, minWidth: '140px' }} />
         <select className="select-dark" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '13px' }}>
-          <option value="">All Statuses</option>
+          style={{ padding: '8px 10px', borderRadius: '8px', fontSize: '12px' }}>
+          <option value="">All Status</option>
           {STATUS_OPTIONS.map(s => <option key={s} value={s} style={{ textTransform: 'capitalize' }}>{s}</option>)}
         </select>
         <select className="select-dark" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
-          style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '13px' }}>
+          style={{ padding: '8px 10px', borderRadius: '8px', fontSize: '12px' }}>
           <option value="">All Types</option>
           <option value="dine-in">Dine In</option>
           <option value="takeaway">Takeaway</option>
@@ -183,6 +287,34 @@ export default function OrdersPage() {
             <div style={{ padding: '60px', textAlign: 'center' }}>
               <div style={{ fontSize: '40px', marginBottom: '12px' }}>📋</div>
               <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No orders found</p>
+            </div>
+          ) : isMobile ? (
+            /* ── Mobile card list ── */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '12px' }}>
+              {filtered.map(order => (
+                <div key={order._id} onClick={() => setSelectedOrder(order)}
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-medium)', borderRadius: '10px', padding: '12px', cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '12px', color: 'var(--gold)', fontWeight: '700' }}>{order.billId}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{formatDateTime(order.createdAt)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {order.orderType === 'dine-in' ? '🪑' : order.orderType === 'delivery' ? '🛵' : '🥡'} {order.orderType === 'dine-in' ? `Table ${order.tableNumber}` : order.customer?.name || order.orderType}
+                    </span>
+                    <span style={{ fontWeight: '700', color: 'var(--gold)', fontSize: '14px' }}>{formatCurrency(order.totalAmount)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }} onClick={e => e.stopPropagation()}>
+                    <select value={order.orderStatus} disabled={updatingId === order._id}
+                      onChange={e => handleStatusChange(order._id, e.target.value)}
+                      className="select-dark"
+                      style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>
+                      {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button onClick={() => handlePrintOrder(order)} style={{ padding: '6px 10px', borderRadius: '6px', fontSize: '13px', background: 'var(--bg-hover)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }} title="Print">🖨️</button>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <table className="table-dark">
@@ -373,6 +505,7 @@ export default function OrdersPage() {
               <button className="btn-outline-gold" onClick={() => setSelectedOrder(null)} style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px' }}>
                 Close
               </button>
+              {/* Print button only for logged-in admin/staff, not guest orders viewed publicly */}
               <button
                 className="btn-gold"
                 onClick={() => handlePrintOrder(selectedOrder)}

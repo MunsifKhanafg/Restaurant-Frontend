@@ -14,7 +14,7 @@ const PAYMENT_ICONS = {
   cash: '💵', card: '💳', jazzcash: '📱', easypaisa: '💚', bankaccount: '🏦', cod: '📦', online: '🌐',
 };
 
-export default function TopBar() {
+export default function TopBar({ isMobile = false, onMenuToggle = () => {} }) {
   const dispatch = useDispatch();
   const location = useLocation();
   const notifications = useSelector((s) => s.ui.notifications);
@@ -31,16 +31,26 @@ export default function TopBar() {
       height: '64px', background: 'var(--bg-surface)',
       borderBottom: '1px solid var(--border)',
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0 24px', position: 'sticky', top: 0, zIndex: 50,
+      padding: isMobile ? '0 12px' : '0 24px', position: 'sticky', top: 0, zIndex: 50,
       transition: 'background-color 0.3s ease',
     }}>
-      <div>
-        <h1 style={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '22px', fontWeight: '600', color: 'var(--text-primary)' }}>
-          {title}
-        </h1>
-        <p style={{ fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-          {new Date().toLocaleDateString('en-PK', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-        </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* Hamburger on mobile */}
+        {isMobile && (
+          <button onClick={onMenuToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '22px', color: 'var(--text-primary)', padding: '4px', display: 'flex', alignItems: 'center' }}>
+            ☰
+          </button>
+        )}
+        <div>
+          <h1 style={{ fontFamily: '"Cormorant Garamond", serif', fontSize: isMobile ? '18px' : '22px', fontWeight: '600', color: 'var(--text-primary)' }}>
+            {title}
+          </h1>
+          {!isMobile && (
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              {new Date().toLocaleDateString('en-PK', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

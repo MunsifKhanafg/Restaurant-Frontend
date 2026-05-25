@@ -40,8 +40,20 @@ export const PAYMENT_LABELS = {
 
 export const getPaymentLabel = (method) => PAYMENT_LABELS[method] || method;
 
-export const generateBillHtml = (order) => {
-  const restaurantName = process.env.REACT_APP_RESTAURANT_NAME || 'Aurum Dining';
+export const generateBillHtml = (order, extras = []) => {
+  const restaurantName = order._restaurantName || process.env.REACT_APP_RESTAURANT_NAME || 'My Restaurant';
+
+  // Combine saved bread + any ad-hoc extras passed at print time
+  const extraLines = [
+    ...(order.breadIncluded && order.breadCharge > 0
+      ? [{ name: `🫓 Bread (${order.breadCount || 1} pc)`, amount: order.breadCharge }]
+      : []),
+    ...extras.filter(e => e.qty > 0).map(e => ({ name: `${e.name} ×${e.qty}`, amount: e.qty * e.price })),
+  ];
+
+  const extraTotal = extraLines.reduce((s, e) => s + e.amount, 0);
+  const finalTotal = order.totalAmount + extraTotal;
+
   const items = order.items.map(i =>
     `<tr>
       <td style="padding:6px 0;border-bottom:1px solid #333">${i.name}</td>
@@ -49,6 +61,15 @@ export const generateBillHtml = (order) => {
       <td style="text-align:right;padding:6px 0;border-bottom:1px solid #333">${formatCurrency(i.price * i.quantity)}</td>
     </tr>`
   ).join('');
+
+  const extraRows = extraLines.map(e =>
+    `<tr>
+      <td style="padding:6px 0;border-bottom:1px solid #333;color:#D4AF37">${e.name}</td>
+      <td style="text-align:center;padding:6px 0;border-bottom:1px solid #333">—</td>
+      <td style="text-align:right;padding:6px 0;border-bottom:1px solid #333;color:#D4AF37">${formatCurrency(e.amount)}</td>
+    </tr>`
+  ).join('');
+
   return `
     <!DOCTYPE html><html><head>
     <meta charset="utf-8"/>
@@ -77,15 +98,15 @@ export const generateBillHtml = (order) => {
     ${order.customer?.name ? `<div class="row"><span class="label">Customer</span><span class="value">${order.customer.name}</span></div>` : ''}
     <hr class="divider"/>
     <table><thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
-    <tbody>${items}</tbody></table>
+    <tbody>${items}${extraRows}</tbody></table>
     <hr class="divider"/>
     <div class="row"><span class="label">Subtotal</span><span class="value">${formatCurrency(order.subtotal)}</span></div>
     <div class="row"><span class="label">Tax (${order.taxPercentage}%)</span><span class="value">${formatCurrency(order.taxAmount)}</span></div>
     ${order.discountAmount > 0 ? `<div class="row"><span class="label">Discount</span><span style="color:#4CAF7D">- ${formatCurrency(order.discountAmount)}</span></div>` : ''}
     ${order.deliveryCharge > 0 ? `<div class="row"><span class="label">Delivery</span><span class="value">${formatCurrency(order.deliveryCharge)}</span></div>` : ''}
-    ${order.breadIncluded && order.breadCharge > 0 ? `<div class="row"><span class="label">🫓 Bread</span><span class="value">${formatCurrency(order.breadCharge)}</span></div>` : ''}
+    ${extraTotal > 0 ? `<div class="row"><span class="label">Extras</span><span class="value">${formatCurrency(extraTotal)}</span></div>` : ''}
     <hr class="divider"/>
-    <div class="row total-row"><span>TOTAL</span><span>${formatCurrency(order.totalAmount)}</span></div>
+    <div class="row total-row"><span>TOTAL</span><span>${formatCurrency(finalTotal)}</span></div>
     <div class="row" style="margin-top:6px"><span class="label">Payment</span><span class="value" style="text-transform:capitalize">${getPaymentLabel(order.paymentMethod)}</span></div>
     <hr class="divider"/>
     <div class="footer">Thank you for dining with us.<br/>Visit again soon!</div>
@@ -93,9 +114,9 @@ export const generateBillHtml = (order) => {
   `;
 };
 
-export const printBill = (order) => {
+export const printBill = (order, extras = []) => {
   const win = window.open('', '_blank', 'width=420,height=700');
-  win.document.write(generateBillHtml(order));
+  win.document.write(generateBillHtml(order, extras));
   win.document.close();
   win.focus();
   setTimeout(() => win.print(), 500);

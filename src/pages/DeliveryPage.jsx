@@ -10,6 +10,13 @@ export default function DeliveryPage() {
   const dispatch = useDispatch();
   const { items: orders, loading } = useSelector((s) => s.orders);
   const [updatingId, setUpdatingId] = useState(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     dispatch(fetchOrders({ type: 'delivery', limit: 100 }));
@@ -49,63 +56,56 @@ export default function DeliveryPage() {
     return (
       <div className="glass-card" style={{ overflow: 'hidden', opacity: isActive ? 1 : 0.7, borderColor: badge.border }}>
         {/* Header */}
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', background: badge.bg, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', background: badge.bg, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '12px', fontWeight: '700', color: badge.color }}>{order.billId}</div>
+            <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '13px', fontWeight: '700', color: badge.color }}>{order.billId}</div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{formatDateTime(order.createdAt)}</div>
           </div>
-          <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', padding: '3px 10px', borderRadius: '999px', background: badge.bg, color: badge.color, border: `1px solid ${badge.border}` }}>
+          <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', padding: '4px 11px', borderRadius: '999px', background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, whiteSpace: 'nowrap' }}>
             {order.orderStatus}
           </span>
         </div>
 
         {/* Customer Info */}
-        <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '14px' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '15px' }}>
                 {order.customer?.name || 'Unknown Customer'}
               </div>
+              {order.customer?.phone && (
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>📱 {order.customer.phone}</div>
+              )}
               {order.customer?.address && (
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  📍 {order.customer.address}
-                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>📍 {order.customer.address}</div>
               )}
               {order.customer?.deliveryZone && (
-                <div style={{ fontSize: '11px', color: 'var(--gold)', marginTop: '2px' }}>
-                  🗺️ {order.customer.deliveryZone}
-                </div>
+                <div style={{ fontSize: '11px', color: 'var(--gold)', marginTop: '2px' }}>🗺️ {order.customer.deliveryZone}</div>
               )}
             </div>
-            {/* Call button */}
             {order.customer?.phone && (
               <a href={`tel:${order.customer.phone}`}
-                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(76,175,125,0.15)', border: '1px solid rgba(76,175,125,0.3)', textDecoration: 'none', cursor: 'pointer' }}>
-                <span style={{ fontSize: '18px' }}>📞</span>
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '10px 14px', borderRadius: '10px', background: 'rgba(76,175,125,0.15)', border: '1px solid rgba(76,175,125,0.3)', textDecoration: 'none', flexShrink: 0 }}>
+                <span style={{ fontSize: '20px' }}>📞</span>
                 <span style={{ fontSize: '10px', color: 'var(--green)', fontWeight: '600' }}>Call</span>
               </a>
             )}
           </div>
-          {order.customer?.phone && (
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>📱 {order.customer.phone}</div>
-          )}
         </div>
 
         {/* Items summary */}
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>
-            {order.items?.length} item(s):
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>{order.items?.length} item(s):</div>
+          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
             {order.items?.map(i => `${i.name} ×${i.quantity}`).join(', ')}
           </div>
         </div>
 
         {/* Total + Payment */}
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '2px' }}>Total</div>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--gold)' }}>{formatCurrency(order.totalAmount)}</div>
+            <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--gold)' }}>{formatCurrency(order.totalAmount)}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '2px' }}>Payment</div>
@@ -115,33 +115,45 @@ export default function DeliveryPage() {
           </div>
         </div>
 
-        {/* Actions */}
+        {/* Driver Actions — clear step-by-step flow */}
         {isActive && (
-          <div style={{ padding: '12px 16px', display: 'flex', gap: '8px' }}>
+          <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {/* Step 1: Kitchen preparing — driver waits */}
+            {['received','confirmed','preparing'].includes(order.orderStatus) && (
+              <div style={{ padding: '12px', borderRadius: '10px', fontSize: '13px', color: 'var(--orange)', background: 'rgba(224,123,57,0.1)', border: '1px solid rgba(224,123,57,0.3)', textAlign: 'center', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>⏳</span>
+                <span>Waiting — Kitchen is preparing the order...</span>
+              </div>
+            )}
+            {/* Step 2: Order ready in kitchen — driver picks up */}
             {order.orderStatus === 'ready' && (
               <button onClick={() => handleStatus(order._id, 'delivered')}
                 disabled={updatingId === order._id}
-                style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', border: 'none', background: 'var(--green)', color: '#fff', opacity: updatingId === order._id ? 0.6 : 1 }}>
-                🛵 Mark Delivered
+                style={{ width: '100%', padding: '13px', borderRadius: '10px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', border: 'none', background: 'linear-gradient(135deg, #E07B39, #C05A1A)', color: '#fff', opacity: updatingId === order._id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>📦</span> Order Ready — Picked Up & Heading Out
               </button>
             )}
+            {/* Step 3: Driver has it, heading to customer — mark complete on arrival */}
             {order.orderStatus === 'delivered' && (
               <button onClick={() => handleStatus(order._id, 'completed')}
                 disabled={updatingId === order._id}
-                style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', border: 'none', background: 'var(--gold)', color: '#0D0D0D', opacity: updatingId === order._id ? 0.6 : 1 }}>
-                ✅ Complete Order
+                style={{ width: '100%', padding: '13px', borderRadius: '10px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', border: 'none', background: 'linear-gradient(135deg, #22C55E, #16A34A)', color: '#fff', opacity: updatingId === order._id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>✅</span> Reached Customer — Mark Delivered
               </button>
             )}
-            {!['ready', 'delivered'].includes(order.orderStatus) && (
-              <div style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '12px', color: 'var(--text-muted)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', textAlign: 'center' }}>
-                Waiting for kitchen...
-              </div>
-            )}
+            {/* Cancel always available */}
             <button onClick={() => handleStatus(order._id, 'cancelled')}
               disabled={updatingId === order._id}
-              style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', border: '1px solid rgba(224,82,82,0.3)', background: 'rgba(224,82,82,0.1)', color: 'var(--red)', opacity: updatingId === order._id ? 0.6 : 1 }}>
-              Cancel
+              style={{ width: '100%', padding: '9px', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', border: '1px solid rgba(224,82,82,0.3)', background: 'rgba(224,82,82,0.08)', color: 'var(--red)', opacity: updatingId === order._id ? 0.6 : 1, fontWeight: '600' }}>
+              ✖ Cancel Order
             </button>
+          </div>
+        )}
+
+        {/* Completed badge */}
+        {!isActive && order.orderStatus !== 'cancelled' && (
+          <div style={{ padding: '12px 14px', textAlign: 'center', fontSize: '13px', color: 'var(--green)', fontWeight: '600' }}>
+            ✅ Delivered successfully
           </div>
         )}
       </div>
@@ -166,7 +178,7 @@ export default function DeliveryPage() {
       </div>
 
       {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '14px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '14px' }}>
         {[
           { label: 'Active Deliveries', val: activeOrders.length, color: 'var(--orange)', icon: '🛵' },
           { label: 'Delivered Today', val: completedOrders.length, color: 'var(--green)', icon: '✅' },
@@ -196,7 +208,7 @@ export default function DeliveryPage() {
       ) : (
         <>
           <h2 style={{ fontFamily: '"Cormorant Garamond", serif', fontSize: '20px', color: 'var(--text-primary)' }}>Active Orders</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(320px,1fr))', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill,minmax(320px,1fr))', gap: '14px' }}>
             {activeOrders.map(order => <DeliveryCard key={order._id} order={order} />)}
           </div>
         </>
