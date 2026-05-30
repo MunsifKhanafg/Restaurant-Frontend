@@ -21,53 +21,20 @@ import DeliveryPage from './pages/DeliveryPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import StaffPage from './pages/StaffPage';
 import SettingsPage from './pages/SettingsPage';
+import CustomerPage from './pages/CustomerPage';
 
 // ─────────────────────────────────────────────
-// PrivateRoute — two jobs:
-//   1. Redirect unauthenticated users to /login
-//   2. If `roles` is provided, redirect users whose role is NOT in that list
-//      • admin/manager mis-route → /pos (shouldn't happen, but safe fallback)
-//      • all others mis-route    → /pos  (their workspace)
+// PrivateRoute
 // ─────────────────────────────────────────────
 const PrivateRoute = ({ children, roles }) => {
   const { user, token } = useSelector((s) => s.auth);
-
-  // Not logged in → login page
   if (!token || !user) return <Navigate to="/login" replace />;
-
-  // Logged in but wrong role → bounce to their workspace
-  if (roles && !roles.includes(user.role)) {
-    return <Navigate to="/pos" replace />;
-  }
-
+  if (roles && !roles.includes(user.role)) return <Navigate to="/pos" replace />;
   return children;
 };
 
 // ─────────────────────────────────────────────
-// GuestOrPrivateRoute — allows unauthenticated guests to access the POS page
-//   • guests (no token)  → render the page directly (customer self-order)
-//   • authenticated staff/admin → also render (normal POS access)
-//   • authenticated but wrong role → bounce to /pos (handled by parent PrivateRoute for other pages)
-// ─────────────────────────────────────────────
-const GuestOrPrivateRoute = ({ children, roles }) => {
-  const { user, token } = useSelector((s) => s.auth);
-
-  // No auth required for guest customers — show the page
-  if (!token || !user) return children;
-
-  // Authenticated: check role if provided
-  if (roles && !roles.includes(user.role)) {
-    return <Navigate to="/pos" replace />;
-  }
-
-  return children;
-};
-
-// ─────────────────────────────────────────────
-// RoleHome — what happens when someone hits "/"
-//   • admin / manager → Dashboard (full access)
-//   • everyone else   → POS (their only workspace)
-//   • unauthenticated → Login
+// RoleHome
 // ─────────────────────────────────────────────
 const RoleHome = () => {
   const { user, token } = useSelector((s) => s.auth);
@@ -103,8 +70,13 @@ function AppContent() {
         {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />
 
-        {/* Guest / Customer self-order — no login required, opens POS directly */}
-        <Route path="/guest" element={<POSPage />} />
+        {/* ── Customer self-order portal ──────────────────────────────────
+            /customer  — new dedicated customer page (recommended)
+            /guest     — legacy alias kept for backward compatibility
+            Both are fully public — no login required.
+        ─────────────────────────────────────────────────────────────── */}
+        <Route path="/customer" element={<CustomerPage />} />
+        <Route path="/guest"    element={<CustomerPage />} />
 
         {/* Protected shell */}
         <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>

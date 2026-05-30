@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchProducts } from '../store/slices/productSlice';
 import { createOrder, fetchOrders } from '../store/slices/orderSlice';
@@ -91,14 +91,16 @@ function AppModal({ modal, onClose }) {
 }
 
 /* ─────────────────────────────────────────────────
-   PRODUCT CARD
+   PRODUCT CARD  (guest-friendly food-app style)
 ───────────────────────────────────────────────── */
 const CARD_H   = 200;
 const IMG_H    = 120;
 const NAME_H   =  42;
 const FOOTER_H = CARD_H - IMG_H - NAME_H;
 
-function ProductCard({ product, onAdd }) {
+function ProductCard({ product, onAdd, isGuest }) {
+  const [added, setAdded] = useState(false);
+
   const getImage = (p) => {
     if (p.image) {
       return p.image.startsWith('/uploads')
@@ -108,29 +110,40 @@ function ProductCard({ product, onAdd }) {
     return CATEGORY_IMAGES[p.category] || CATEGORY_IMAGES['default'];
   };
 
+  const handleAdd = () => {
+    onAdd(product);
+    if (isGuest) {
+      setAdded(true);
+      setTimeout(() => setAdded(false), 1200);
+    }
+  };
+
   return (
     <div
-      onClick={() => onAdd(product)}
+      onClick={handleAdd}
       className="glass-card product-card"
       style={{ cursor: 'pointer', overflow: 'hidden', height: `${CARD_H}px`,
-               display: 'flex', flexDirection: 'column',
-               transition: 'border-color 0.2s, transform 0.15s, box-shadow 0.15s' }}
+               display: 'flex', flexDirection: 'column', position: 'relative',
+               transition: 'border-color 0.2s, transform 0.15s, box-shadow 0.15s',
+               border: added ? '1.5px solid rgba(16,185,129,0.6)' : undefined }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'translateY(-2px)';
         e.currentTarget.style.boxShadow = '0 6px 24px rgba(212,175,55,0.18)';
-        e.currentTarget.style.borderColor = 'rgba(212,175,55,0.45)';
+        if (!added) e.currentTarget.style.borderColor = 'rgba(212,175,55,0.45)';
       }}
       onMouseLeave={e => {
         e.currentTarget.style.transform = 'translateY(0)';
         e.currentTarget.style.boxShadow = '';
-        e.currentTarget.style.borderColor = '';
+        if (!added) e.currentTarget.style.borderColor = '';
       }}
     >
       <div style={{ height: `${IMG_H}px`, flexShrink: 0, position: 'relative',
                     overflow: 'hidden', background: 'var(--bg-elevated)' }}>
         <img src={getImage(product)} alt={product.name} className="product-card-image"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+                   transition: 'transform 0.3s', transform: added ? 'scale(1.04)' : 'scale(1)' }}
           onError={e => { e.target.src = CATEGORY_IMAGES[product.category] || CATEGORY_IMAGES['default']; }} />
+        {/* Badges */}
         {product.isVegetarian && (
           <span style={{ position: 'absolute', top: 5, right: 5, background: 'rgba(0,0,0,0.65)',
                          borderRadius: '4px', padding: '2px 5px', fontSize: '10px', lineHeight: 1 }}>🌱</span>
@@ -139,6 +152,22 @@ function ProductCard({ product, onAdd }) {
           <span style={{ position: 'absolute', top: 5, left: 5, background: 'rgba(212,175,55,0.88)',
                          borderRadius: '4px', padding: '2px 5px', fontSize: '9px', lineHeight: 1,
                          color: '#0D0D0D', fontWeight: 700 }}>🫓 Bread</span>
+        )}
+        {/* Added flash */}
+        {added && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(16,185,129,0.25)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ fontSize: '28px' }}>✅</span>
+          </div>
+        )}
+        {/* Add button overlay — guest only, bottom-right */}
+        {isGuest && !added && (
+          <div style={{ position: 'absolute', bottom: 6, right: 6,
+                        width: 28, height: 28, borderRadius: '50%',
+                        background: 'linear-gradient(135deg,#D4AF37,#B8960C)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.35)', fontSize: '18px', fontWeight: 700,
+                        color: '#0D0D0D', lineHeight: 1 }}>+</div>
         )}
       </div>
 
@@ -198,44 +227,470 @@ function CartItem({ item, onInc, onDec, onRemove }) {
   );
 }
 
+/* ──────────────────────────────────────────────────
+   ORDER CARD
+   Inline expandable card — shows live countdown + full details.
+   Newest active order is always fully expanded & auto-refreshes.
+───────────────────────────────────────────────── */
+function OrderCard({ order: initialOrder, products, estimatedMins, statusColor, isOpen, onToggle, isNewest }) {
+  // Keep a local copy of the order so we can poll for live status updates
+  const [order, setOrder] = useState(initialOrder);
+  const [secsLeft, setSecsLeft] = useState(null);
+  const timerRef  = useRef(null);
+  const pollRef   = useRef(null);
+
+  // Sync when parent passes a new version of the order (e.g. after GuestPastOrders re-fetches)
+  useEffect(() => { setOrder(initialOrder); }, [initialOrder]);
+
+  const isActive = ['received','confirmed','preparing','ready','delivered'].includes(order.orderStatus);
+
+  /* ── Live status polling: every 12s for active orders ── */
+  useEffect(() => {
+    if (!isActive) {
+      clearInterval(pollRef.current);
+      return;
+    }
+    const poll = async () => {
+      try {
+        const base = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '') || 'http://localhost:5000/api';
+        const res  = await fetch(`${base}/orders/${order._id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const updated = data?.data || data?.order || data;
+        if (updated?._id && updated.orderStatus !== order.orderStatus) {
+          setOrder(updated);
+        }
+      } catch { /* silently ignore */ }
+    };
+    poll(); // immediate check on mount
+    pollRef.current = setInterval(poll, 12000);
+    return () => clearInterval(pollRef.current);
+  }, [order._id, isActive, order.orderStatus]); // eslint-disable-line
+
+  /* ── Countdown timer ── */
+  useEffect(() => {
+    clearInterval(timerRef.current);
+    if (!isActive) { setSecsLeft(null); return; }
+    const elapsed   = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 1000);
+    const remaining = estimatedMins * 60 - elapsed;
+    setSecsLeft(Math.max(0, remaining));
+    timerRef.current = setInterval(() => {
+      setSecsLeft(s => {
+        if (s <= 1) { clearInterval(timerRef.current); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [isActive, order.createdAt, estimatedMins]); // eslint-disable-line
+
+  const mins = secsLeft !== null ? Math.floor(secsLeft / 60) : estimatedMins;
+  const secs = secsLeft !== null ? secsLeft % 60 : 0;
+  const progressPct = secsLeft !== null
+    ? Math.max(0, Math.round(((estimatedMins * 60 - secsLeft) / (estimatedMins * 60)) * 100))
+    : 100;
+
+  const typeLabel =
+    order.orderType === 'dine-in'  ? `🍽️ Dine-In — Table ${order.tableNumber}` :
+    order.orderType === 'delivery' ? '🛵 Delivery' : '🥡 Takeaway';
+
+  const sc = statusColor(order.orderStatus);
+
+  /* Status label shown to customer — friendly wording */
+  const friendlyStatus = (s) => {
+    const map = {
+      received:  '📩 Order Received',
+      confirmed: '✅ Confirmed',
+      preparing: '👨‍🍳 Being Prepared',
+      ready:     order.orderType === 'delivery' ? '🔔 Ready — Rider Coming' : '🔔 Ready!',
+      delivered: '🛵 On the Way',
+      completed: '✅ Delivered',
+      cancelled: '❌ Cancelled',
+    };
+    return map[s] || s;
+  };
+
+  /* The newest active order is always fully expanded */
+  const alwaysOpen = isNewest && isActive;
+
+  return (
+    <div style={{
+      borderRadius: '14px', overflow: 'hidden',
+      border: `1.5px solid ${alwaysOpen ? 'rgba(212,175,55,0.5)' : 'var(--border)'}`,
+      background: 'var(--bg-elevated)',
+      boxShadow: alwaysOpen ? '0 4px 20px rgba(212,175,55,0.12)' : 'none',
+    }}>
+
+      {/* ────────────────────────────────────────────────────
+          NEWEST ACTIVE ORDER — fully visible without any tap
+      ──────────────────────────────────────────────────── */}
+      {alwaysOpen ? (
+        <div style={{ padding: '18px' }}>
+
+          {/* Top row: bill ID + status badge + time */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', gap: '8px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: '14px', color: 'var(--gold)', fontWeight: 700 }}>
+                  {order.billId}
+                </span>
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 9px', borderRadius: '999px',
+                               background: 'rgba(16,185,129,0.15)', color: '#10B981',
+                               border: '1px solid rgba(16,185,129,0.3)' }}>
+                  ✅ Order Placed
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                {typeLabel} · {formatDateTime(order.createdAt)}
+              </div>
+            </div>
+            <span style={{ padding: '4px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 700,
+                           background: `${sc}22`, color: sc, flexShrink: 0, whiteSpace: 'nowrap' }}>
+              {friendlyStatus(order.orderStatus)}
+            </span>
+          </div>
+
+          {/* ── Live countdown timer ── */}
+          {['received','confirmed','preparing'].includes(order.orderStatus) && (
+            <div style={{
+              padding: '16px', borderRadius: '12px', textAlign: 'center', marginBottom: '14px',
+              background: 'rgba(212,175,55,0.07)', border: '1px solid rgba(212,175,55,0.25)',
+            }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase',
+                            letterSpacing: '0.12em', fontWeight: 700, marginBottom: '6px' }}>
+                {order.orderType === 'delivery' ? '🛵 Estimated Delivery Time' : '⏱ Your Food Will Be Ready In'}
+              </div>
+              <div style={{ fontSize: '44px', fontWeight: 700, color: 'var(--gold)',
+                            fontFamily: '"JetBrains Mono",monospace', lineHeight: 1, letterSpacing: '-1px' }}>
+                {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '5px' }}>
+                ~{estimatedMins} min {order.orderType === 'delivery' ? 'total (kitchen + delivery)' : 'until ready'}
+              </div>
+              <div style={{ marginTop: '10px', height: '5px', borderRadius: '999px',
+                            background: 'rgba(212,175,55,0.15)', overflow: 'hidden' }}>
+                <div style={{ height: '100%', borderRadius: '999px',
+                              background: 'linear-gradient(90deg,#D4AF37,#B8960C)',
+                              width: `${progressPct}%`, transition: 'width 1s linear' }} />
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>{progressPct}% elapsed</div>
+            </div>
+          )}
+
+          {/* ── "Ready" banner ── */}
+          {order.orderStatus === 'ready' && (
+            <div style={{ padding: '14px', borderRadius: '12px', textAlign: 'center', marginBottom: '14px',
+                          background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.35)',
+                          animation: 'none' }}>
+              <div style={{ fontSize: '28px', marginBottom: '4px' }}>🔔</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: '#10B981' }}>
+                {order.orderType === 'dine-in' ? 'Your food is ready! Being brought to your table.' :
+                 order.orderType === 'takeaway' ? 'Your order is ready for pickup!' :
+                 'Order is ready — rider is picking it up!'}
+              </div>
+            </div>
+          )}
+
+          {/* ── "On the way" banner for delivery ── */}
+          {order.orderStatus === 'delivered' && order.orderType === 'delivery' && (
+            <div style={{ padding: '14px', borderRadius: '12px', textAlign: 'center', marginBottom: '14px',
+                          background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.35)' }}>
+              <div style={{ fontSize: '28px', marginBottom: '6px' }}>🛵</div>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: '#3B82F6' }}>
+                Your order is on the way!
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Rider has picked up your order and is heading to you
+              </div>
+            </div>
+          )}
+
+          {/* ── "Delivered" success banner ── */}
+          {order.orderStatus === 'completed' && order.orderType === 'delivery' && (
+            <div style={{ padding: '14px', borderRadius: '12px', textAlign: 'center', marginBottom: '14px',
+                          background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.35)' }}>
+              <div style={{ fontSize: '28px', marginBottom: '6px' }}>🎉</div>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: '#10B981' }}>
+                Delivered! Enjoy your meal.
+              </div>
+            </div>
+          )}
+
+          {/* ── "What You Ordered" — always visible, no tap needed ── */}
+          <div style={{ marginBottom: '14px' }}>
+            <div style={{ fontSize: '11px', color: 'var(--gold)', textTransform: 'uppercase',
+                          fontWeight: 700, letterSpacing: '0.1em', marginBottom: '10px' }}>
+              🍽️ What You Ordered
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {order.items?.map((item, i) => {
+                const prod = products.find(p => p._id === (item.product?._id || item.product));
+                return (
+                  <div key={i} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '10px 13px', borderRadius: '9px',
+                    background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {item.name}
+                        <span style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-muted)', marginLeft: '6px' }}>
+                          × {item.quantity}
+                        </span>
+                      </div>
+                      {prod?.cookingTime && (
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          ⏱ {prod.cookingTime} min prep time
+                        </div>
+                      )}
+                    </div>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>
+                      {formatCurrency(item.price * item.quantity)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Bill total ── */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '12px 4px', borderTop: '1px solid var(--border)', marginBottom: '14px',
+          }}>
+            <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)' }}>TOTAL</span>
+            <span style={{ fontSize: '17px', fontWeight: 700, color: 'var(--gold)' }}>{formatCurrency(order.totalAmount)}</span>
+          </div>
+
+          {/* ── What happens next — hide when order is fully done ── */}
+          {!['completed','cancelled'].includes(order.orderStatus) && (
+            <div style={{
+              padding: '12px 14px', borderRadius: '10px', marginBottom: '8px',
+              background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)',
+            }}>
+              <div style={{ fontSize: '10px', color: '#3B82F6', textTransform: 'uppercase',
+                            fontWeight: 700, letterSpacing: '0.1em', marginBottom: '8px' }}>
+                📋 What Happens Next
+              </div>
+              {[
+                { icon: '📩', text: 'Order received by kitchen', done: true },
+                { icon: '👨‍🍳',
+                  text: `Kitchen cooking your food (~${Math.max(1, estimatedMins - (order.orderType === 'delivery' ? 20 : order.orderType === 'takeaway' ? 5 : 0))} min)`,
+                  done: ['ready','delivered','completed'].includes(order.orderStatus) },
+                order.orderType === 'delivery'
+                  ? { icon: '🛵', text: 'Rider picks up & brings to you (~20 min)',
+                      done: ['delivered','completed'].includes(order.orderStatus) }
+                  : order.orderType === 'takeaway'
+                  ? { icon: '🥡', text: 'Order packed — please come collect',
+                      done: ['ready','completed'].includes(order.orderStatus) }
+                  : { icon: '🍽️', text: `Food brought to Table ${order.tableNumber}`,
+                      done: ['ready','completed'].includes(order.orderStatus) },
+              ].map((step, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px',
+                                      marginBottom: i < 2 ? '8px' : 0 }}>
+                  <span style={{ fontSize: '16px', flexShrink: 0 }}>{step.done ? '✅' : step.icon}</span>
+                  <span style={{ fontSize: '12px', lineHeight: 1.5,
+                                 color: step.done ? 'var(--text-primary)' : 'var(--text-muted)',
+                                 fontWeight: step.done ? 600 : 400 }}>
+                    {step.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '6px' }}>
+            🔄 Status updates every 12 seconds
+          </div>
+        </div>
+
+      ) : (
+        /* ────────────────────────────────────────────────────
+           ALL OTHER ORDERS — compact collapsible card
+        ──────────────────────────────────────────────────── */
+        <>
+          <div
+            onClick={onToggle}
+            style={{ padding: '13px 16px', cursor: 'pointer', display: 'flex',
+                     justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px', flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: '13px',
+                               color: 'var(--gold)', fontWeight: 700 }}>{order.billId}</span>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                {typeLabel} · {order.items?.length} item{order.items?.length !== 1 ? 's' : ''} · {formatDateTime(order.createdAt)}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column',
+                          alignItems: 'flex-end', gap: '4px' }}>
+              <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--gold)' }}>{formatCurrency(order.totalAmount)}</span>
+              <span style={{ padding: '2px 9px', borderRadius: '999px', fontSize: '10px', fontWeight: 700,
+                             background: `${sc}22`, color: sc }}>{friendlyStatus(order.orderStatus)}</span>
+            </div>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)', flexShrink: 0, marginTop: '2px' }}>
+              {isOpen ? '▲' : '▼'}
+            </span>
+          </div>
+
+          {isOpen && (
+            <div style={{ borderTop: '1px solid var(--border)', padding: '12px 16px',
+                          display: 'flex', flexDirection: 'column', gap: '10px' }}>
+
+              {/* Active but not newest: compact timer */}
+              {isActive && ['received','confirmed','preparing'].includes(order.orderStatus) && (
+                <div style={{ padding: '12px', borderRadius: '8px', textAlign: 'center',
+                              background: 'rgba(212,175,55,0.07)', border: '1px solid rgba(212,175,55,0.2)' }}>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase',
+                                fontWeight: 700, letterSpacing: '0.08em', marginBottom: '4px' }}>
+                    {order.orderType === 'delivery' ? '🛵 Estimated Delivery' : '⏱ Estimated Prep Time'}
+                  </div>
+                  <div style={{ fontSize: '30px', fontWeight: 700, color: 'var(--gold)',
+                                fontFamily: '"JetBrains Mono",monospace' }}>
+                    {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+                  </div>
+                </div>
+              )}
+
+              {/* Status banners for completed states */}
+              {!isActive && (
+                <div style={{ padding: '8px 12px', borderRadius: '7px', textAlign: 'center',
+                              background: order.orderStatus === 'cancelled' ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)',
+                              border: `1px solid ${order.orderStatus === 'cancelled' ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.25)'}` }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700,
+                                 color: order.orderStatus === 'cancelled' ? '#EF4444' : '#10B981' }}>
+                    {order.orderStatus === 'delivered' ? '✅ Delivered' :
+                     order.orderStatus === 'completed' ? '✅ Completed' :
+                     order.orderStatus === 'ready'     ? '🔔 Ready for Pickup' :
+                     order.orderStatus === 'cancelled' ? '❌ Cancelled' : `✅ ${order.orderStatus}`}
+                  </span>
+                </div>
+              )}
+
+              {/* Items */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{ fontSize: '11px', color: 'var(--gold)', fontWeight: 700,
+                              textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>
+                  🍽️ Items Ordered
+                </div>
+                {order.items?.map((item, i) => {
+                  const prod = products.find(p => p._id === (item.product?._id || item.product));
+                  return (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                          padding: '8px 10px', borderRadius: '7px', background: 'var(--bg-surface)',
+                                          border: '1px solid var(--border)' }}>
+                      <div>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{item.name}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '5px' }}>× {item.quantity}</span>
+                        {prod?.cookingTime && (
+                          <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '1px' }}>⏱ {prod.cookingTime} min</div>
+                        )}
+                      </div>
+                      <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>
+                        {formatCurrency(item.price * item.quantity)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Bill totals */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '8px',
+                            display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {order.discountAmount > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Discount</span>
+                    <span style={{ fontSize: '11px', color: '#10B981' }}>− {formatCurrency(order.discountAmount)}</span>
+                  </div>
+                )}
+                {order.deliveryCharge > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>🛵 Delivery</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{formatCurrency(order.deliveryCharge)}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px',
+                              paddingTop: '5px', borderTop: '1px dashed var(--border)' }}>
+                  <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-primary)' }}>TOTAL</span>
+                  <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--gold)' }}>{formatCurrency(order.totalAmount)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ─────────────────────────────────────────────────
    GUEST PAST ORDERS PANEL
-   Shows guest's own orders by name — no print button
+   Shows guest's own orders by name — no print button.
+   Auto-polls every 20s so status updates appear live.
 ───────────────────────────────────────────────── */
-function GuestPastOrders({ guestName }) {
-  const [orders, setOrders] = useState([]);
+function GuestPastOrders({ guestName, refreshKey = 0, products = [] }) {
+  const [orders, setOrders]   = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const pollRef = useRef(null);
 
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const base = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '') || 'http://localhost:5000/api';
+      const res  = await fetch(`${base}/orders/guest-orders?limit=200`);
+      if (!res.ok) throw new Error('fetch failed');
+      const data = await res.json();
+      const all  = data?.data?.orders || data?.data || [];
+      const mine = guestName && guestName !== 'Guest'
+        ? all.filter(o =>
+            o.customer?.name?.toLowerCase().trim() === guestName.toLowerCase().trim()
+          )
+        : [];
+      setOrders(mine);
+      // Auto-expand the most recent order when a new order is placed
+      if (refreshKey > 0 && mine.length > 0) setExpanded(mine[0].billId);
+    } catch {
+      setOrders([]);
+    }
+    if (!silent) setLoading(false);
+  }, [guestName, refreshKey]);
+
+  // Initial load + reload on refreshKey change
+  useEffect(() => { load(); }, [load]);
+
+  // Live polling every 15s so statuses update without the customer refreshing
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const base = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-        const res = await fetch(`${base}/orders/guest-orders?limit=200`);
-        const data = await res.json();
-        const all = data?.data?.orders || data?.data || [];
-        // Filter to only this guest's orders by name match (case-insensitive)
-        const mine = guestName && guestName !== 'Guest'
-          ? all.filter(o =>
-              o.customer?.name?.toLowerCase().trim() === guestName.toLowerCase().trim()
-            )
-          : [];
-        setOrders(mine);
-      } catch {
-        setOrders([]);
-      }
-      setLoading(false);
-    };
-    load();
-  }, [guestName]);
+    pollRef.current = setInterval(() => load(true), 15000);
+    return () => clearInterval(pollRef.current);
+  }, [load]);
+
+  // Auto-expand newest order whenever refreshKey increments (new order placed)
+  useEffect(() => {
+    if (refreshKey > 0 && orders.length > 0) {
+      setExpanded(orders[0].billId);
+    }
+  }, [refreshKey]); // eslint-disable-line
 
   const statusColor = (s) => {
     const map = {
       received: '#3B82F6', confirmed: '#D4AF37', preparing: '#F59E0B',
-      ready: '#10B981', delivered: '#10B981', completed: '#10B981', cancelled: '#EF4444',
+      ready: '#10B981', delivered: '#3B82F6', completed: '#10B981', cancelled: '#EF4444',
     };
     return map[s] || '#888';
+  };
+
+  const calcMins = (order) => {
+    if (!order) return 20;
+    let maxCook = 15;
+    order.items?.forEach(item => {
+      const prod = products.find(p => p._id === (item.product?._id || item.product));
+      const ct = prod?.cookingTime || 15;
+      if (ct > maxCook) maxCook = ct;
+    });
+    if (order.orderType === 'delivery')  return maxCook + 20;
+    if (order.orderType === 'takeaway')  return maxCook + 5;
+    return maxCook;
   };
 
   if (loading) {
@@ -251,11 +706,11 @@ function GuestPastOrders({ guestName }) {
     return (
       <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
         <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
-        <p style={{ fontSize: '15px', marginBottom: '6px' }}>No past orders found</p>
+        <p style={{ fontSize: '15px', marginBottom: '6px' }}>No orders yet</p>
         <p style={{ fontSize: '12px' }}>
           {guestName && guestName !== 'Guest'
             ? `No orders found for "${guestName}"`
-            : 'Enter your name when ordering so we can track your history'}
+            : 'Place an order and it will appear here'}
         </p>
       </div>
     );
@@ -263,166 +718,23 @@ function GuestPastOrders({ guestName }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      {/* Order detail modal */}
-      {selected && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 600,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="glass-card-elevated"
-            style={{ width: '100%', maxWidth: '440px', maxHeight: '88vh', overflowY: 'auto', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div>
-                <h2 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '20px', color: 'var(--gold)', margin: 0 }}>
-                  {selected.billId}
-                </h2>
-                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  {formatDateTime(selected.createdAt)}
-                </p>
-              </div>
-              <button onClick={() => setSelected(null)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '22px', cursor: 'pointer' }}>×</button>
-            </div>
-
-            {/* Status badge */}
-            <div style={{ marginBottom: '16px' }}>
-              <span style={{ padding: '5px 14px', borderRadius: '999px', fontSize: '12px', fontWeight: 700,
-                             background: `${statusColor(selected.orderStatus)}22`,
-                             border: `1px solid ${statusColor(selected.orderStatus)}55`,
-                             color: statusColor(selected.orderStatus) }}>
-                {selected.orderStatus?.toUpperCase()}
-              </span>
-            </div>
-
-            {/* Order type / delivery info */}
-            <div style={{ marginBottom: '16px', padding: '12px 14px', borderRadius: '8px',
-                          background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                {selected.orderType === 'dine-in' ? `🍽️ Dine-In — Table ${selected.tableNumber}`
-                 : selected.orderType === 'delivery' ? '🛵 Delivery'
-                 : '🥡 Takeaway'}
-              </div>
-              {selected.orderType === 'delivery' && selected.customer?.address && (
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  📍 {selected.customer.address}
-                  {selected.customer.deliveryZone ? ` — ${selected.customer.deliveryZone}` : ''}
-                </div>
-              )}
-              {/* Delivery status info for guest */}
-              {selected.orderType === 'delivery' && (
-                <div style={{ marginTop: '8px', padding: '8px 10px', borderRadius: '8px',
-                              background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.2)' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--gold)', fontWeight: 700 }}>
-                    🚚 Delivery Status: {selected.orderStatus}
-                  </div>
-                  {selected.orderStatus === 'preparing' && (
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                      Your food is being prepared in the kitchen
-                    </div>
-                  )}
-                  {selected.orderStatus === 'ready' && (
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                      Your order is ready and being picked up by the driver
-                    </div>
-                  )}
-                  {selected.orderStatus === 'delivered' && (
-                    <div style={{ fontSize: '11px', color: '#10B981', marginTop: '3px' }}>
-                      ✅ Your order has been delivered!
-                    </div>
-                  )}
-                  {selected.orderStatus === 'completed' && (
-                    <div style={{ fontSize: '11px', color: '#10B981', marginTop: '3px' }}>
-                      ✅ Order completed
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Items */}
-            <h3 style={{ fontSize: '11px', color: 'var(--gold)', textTransform: 'uppercase', fontWeight: 700,
-                         letterSpacing: '0.1em', marginBottom: '10px' }}>Items Ordered</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
-              {selected.items?.map((item, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
-                                      padding: '9px 12px', borderRadius: '8px',
-                                      background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{item.name} × {item.quantity}</span>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gold)' }}>
-                    {formatCurrency(item.price * item.quantity)}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Total */}
-            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
-              {selected.discountAmount > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Discount</span>
-                  <span style={{ fontSize: '12px', color: '#10B981' }}>− {formatCurrency(selected.discountAmount)}</span>
-                </div>
-              )}
-              {selected.deliveryCharge > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>🛵 Delivery</span>
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{formatCurrency(selected.deliveryCharge)}</span>
-                </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
-                <span style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)' }}>TOTAL</span>
-                <span style={{ fontWeight: 700, fontSize: '16px', color: 'var(--gold)' }}>
-                  {formatCurrency(selected.totalAmount)}
-                </span>
-              </div>
-            </div>
-
-            {/* Close button — NO PRINT for guest */}
-            <button className="btn-gold" onClick={() => setSelected(null)}
-              style={{ width: '100%', padding: '12px', borderRadius: '8px', fontSize: '14px',
-                       fontWeight: 700, marginTop: '20px' }}>
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Order cards list */}
-      {orders.map(order => (
-        <div key={order._id} onClick={() => setSelected(order)}
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-medium)',
-                   borderRadius: '12px', padding: '14px 16px', cursor: 'pointer',
-                   transition: 'border-color 0.2s' }}
-          onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(212,175,55,0.4)'}
-          onMouseLeave={e => e.currentTarget.style.borderColor = ''}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-            <span style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: '13px',
-                           color: 'var(--gold)', fontWeight: 700 }}>{order.billId}</span>
-            <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700,
-                           background: `${statusColor(order.orderStatus)}22`,
-                           color: statusColor(order.orderStatus) }}>
-              {order.orderStatus}
-            </span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '2px' }}>
-                {formatDateTime(order.createdAt)}
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                {order.items?.length} item{order.items?.length !== 1 ? 's' : ''}
-                {order.orderType === 'delivery' ? ' · 🛵 Delivery' : order.orderType === 'dine-in' ? ` · Table ${order.tableNumber}` : ' · 🥡 Takeaway'}
-              </div>
-            </div>
-            <span style={{ fontWeight: 700, fontSize: '16px', color: 'var(--gold)' }}>
-              {formatCurrency(order.totalAmount)}
-            </span>
-          </div>
-        </div>
+      {orders.map((order, idx) => (
+        <OrderCard
+          key={order._id}
+          order={order}
+          products={products}
+          estimatedMins={calcMins(order)}
+          statusColor={statusColor}
+          isOpen={expanded === order.billId}
+          onToggle={() => setExpanded(prev => prev === order.billId ? null : order.billId)}
+          isNewest={idx === 0}
+        />
       ))}
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────────
+/* ──────────────────────────────────────────────────
    MOBILE CART PANEL — fully scrollable, no clipping
 ───────────────────────────────────────────────── */
 function MobileCartPanel({
@@ -436,7 +748,7 @@ function MobileCartPanel({
   return (
     <div className="glass-card" style={{ width: '100%', borderRadius: '12px' }}>
 
-      {/* Cart header — show guest name if guest */}
+      {/* Cart header */}
       <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)',
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h3 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '17px',
@@ -487,12 +799,12 @@ function MobileCartPanel({
         ))}
       </div>
 
-      {/* Order summary + payment — only shown when cart has items */}
+      {/* Order summary + payment */}
       {cart.items.length > 0 && (
         <div style={{ padding: '0 14px 32px', display: 'flex', flexDirection: 'column', gap: '0' }}>
           <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0 14px' }} />
 
-          {/* Bread section — quantity + per-unit price (entered after meal) */}
+          {/* Bread section */}
           {hasBreadItems && (
             <div style={{ marginBottom: '12px', padding: '11px 13px', borderRadius: '10px',
                           background: 'rgba(212,175,55,0.07)', border: '1px solid rgba(212,175,55,0.22)' }}>
@@ -536,7 +848,7 @@ function MobileCartPanel({
             ))}
           </div>
 
-          {/* Discount — only for non-guest (staff) */}
+          {/* Discount — staff only */}
           {!isGuest && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
               <span style={{ fontSize: '13px', color: 'var(--text-muted)', flex: 1 }}>Discount (Rs)</span>
@@ -630,7 +942,7 @@ function MobileCartPanel({
             </div>
           )}
 
-          {/* Place Order button — always reachable */}
+          {/* Place Order button */}
           <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
             <button className="btn-outline-gold"
               onClick={() => { dispatch(clearCart()); setBreadCount(0); }}
@@ -651,7 +963,7 @@ function MobileCartPanel({
 }
 
 /* ─────────────────────────────────────────────────
-   GUEST HEADER BAR (shown when accessed via /guest)
+   GUEST HEADER BAR
 ───────────────────────────────────────────────── */
 function GuestHeader({ guestName, restaurantName }) {
   return (
@@ -679,22 +991,219 @@ function GuestHeader({ guestName, restaurantName }) {
 }
 
 /* ─────────────────────────────────────────────────
+   ORDER CONFIRMATION MODAL (staff only, not for guests)
+───────────────────────────────────────────────── */
+function OrderConfirmationModal({ order, products, isGuest, guestName, onClose, onViewOrders }) {
+  const [secsLeft, setSecsLeft] = useState(null);
+  const timerRef = useRef(null);
+
+  const estimatedMins = React.useMemo(() => {
+    if (!order) return 20;
+    let maxCook = 15;
+    order.items.forEach(item => {
+      const prod = products.find(p => p._id === item.product?._id || p._id === item.product);
+      const ct = prod?.cookingTime || 15;
+      if (ct > maxCook) maxCook = ct;
+    });
+    if (order.orderType === 'delivery')  return maxCook + 20;
+    if (order.orderType === 'takeaway')  return maxCook + 5;
+    return maxCook;
+  }, [order, products]);
+
+  useEffect(() => {
+    if (!order) return;
+    setSecsLeft(estimatedMins * 60);
+    timerRef.current = setInterval(() => {
+      setSecsLeft(s => {
+        if (s <= 1) { clearInterval(timerRef.current); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [order, estimatedMins]);
+
+  useEffect(() => {
+    if (order) {
+      try {
+        sessionStorage.setItem('lastOrder', JSON.stringify({
+          billId: order.billId, orderType: order.orderType,
+          tableNumber: order.tableNumber, items: order.items,
+          totalAmount: order.totalAmount, estimatedMins, createdAt: order.createdAt,
+          customer: order.customer,
+        }));
+      } catch {}
+    }
+  }, [order, estimatedMins]);
+
+  if (!order) return null;
+
+  const mins = secsLeft !== null ? Math.floor(secsLeft / 60) : estimatedMins;
+  const secs = secsLeft !== null ? secsLeft % 60 : 0;
+
+  const typeLabel =
+    order.orderType === 'dine-in'  ? `🍽️ Dine-In — Table ${order.tableNumber}` :
+    order.orderType === 'delivery' ? '🛵 Home Delivery' : '🥡 Takeaway';
+
+  const progressPct = secsLeft !== null
+    ? Math.max(0, Math.round(((estimatedMins * 60 - secsLeft) / (estimatedMins * 60)) * 100))
+    : 0;
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 700,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
+    }}>
+      <div className="glass-card-elevated" style={{
+        width: '100%', maxWidth: '460px', maxHeight: '92vh', overflowY: 'auto',
+        borderRadius: '16px', overflow: 'hidden',
+      }}>
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.08))',
+          borderBottom: '1px solid rgba(16,185,129,0.3)',
+          padding: '24px 24px 20px', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '8px' }}>✅</div>
+          <h2 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '26px', color: '#10B981', margin: '0 0 4px' }}>
+            Order Placed!
+          </h2>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0 }}>
+            {isGuest ? `Thank you, ${guestName || 'Guest'}!` : 'Order received by kitchen'}
+          </p>
+          <div style={{
+            display: 'inline-block', marginTop: '10px',
+            fontFamily: '"JetBrains Mono",monospace', fontSize: '13px', color: 'var(--gold)',
+            background: 'rgba(212,175,55,0.12)', padding: '4px 14px', borderRadius: '999px',
+            border: '1px solid rgba(212,175,55,0.3)',
+          }}>
+            {order.billId}
+          </div>
+        </div>
+
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{
+            padding: '12px 16px', borderRadius: '10px',
+            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{typeLabel}</span>
+            {order.orderType === 'delivery' && order.customer?.address && (
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', maxWidth: '160px', textAlign: 'right', lineHeight: 1.4 }}>
+                📍 {order.customer.address}
+              </span>
+            )}
+          </div>
+
+          <div style={{
+            padding: '16px', borderRadius: '12px',
+            background: 'rgba(212,175,55,0.07)', border: '1px solid rgba(212,175,55,0.25)', textAlign: 'center',
+          }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase',
+                          letterSpacing: '0.1em', fontWeight: 700, marginBottom: '8px' }}>
+              {order.orderType === 'delivery' ? '🛵 Estimated Delivery Time' : '⏱ Estimated Prep Time'}
+            </div>
+            <div style={{ fontSize: '42px', fontWeight: 700, color: 'var(--gold)',
+                          fontFamily: '"JetBrains Mono",monospace', lineHeight: 1 }}>
+              {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+              {order.orderType === 'delivery' ? `~${estimatedMins} min total` : `~${estimatedMins} min until ready`}
+            </div>
+            <div style={{ marginTop: '12px', height: '4px', borderRadius: '999px',
+                          background: 'rgba(212,175,55,0.15)', overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: '999px',
+                background: 'linear-gradient(90deg, #D4AF37, #B8960C)',
+                width: `${progressPct}%`, transition: 'width 1s linear',
+              }} />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '11px', color: 'var(--gold)', textTransform: 'uppercase',
+                          fontWeight: 700, letterSpacing: '0.1em', marginBottom: '10px' }}>
+              🍽️ Your Order
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {order.items.map((item, i) => {
+                const prod = products.find(p => p._id === item.product?._id || p._id === item.product);
+                return (
+                  <div key={i} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '10px 14px', borderRadius: '8px',
+                    background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {item.name}
+                        <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--text-muted)', marginLeft: '6px' }}>
+                          × {item.quantity}
+                        </span>
+                      </div>
+                      {prod?.cookingTime && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>⏱ {prod.cookingTime} min prep</div>
+                      )}
+                    </div>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>
+                      {formatCurrency(item.price * item.quantity)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ padding: '14px 16px', borderRadius: '10px', background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '4px', borderTop: '1px solid var(--border)' }}>
+              <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>TOTAL</span>
+              <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--gold)' }}>{formatCurrency(order.totalAmount)}</span>
+            </div>
+          </div>
+
+          {/* Action buttons — staff gets print, guest gets order more + view orders */}
+          {isGuest ? (
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button className="btn-outline-gold" onClick={onClose}
+                style={{ flex: 1, padding: '13px', borderRadius: '10px', fontSize: '13px', fontWeight: 600 }}>
+                🍽️ Order More
+              </button>
+              <button className="btn-gold" onClick={onViewOrders}
+                style={{ flex: 1, padding: '13px', borderRadius: '10px', fontSize: '13px', fontWeight: 700 }}>
+                📋 My Orders
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button className="btn-outline-gold" onClick={onClose}
+                style={{ flex: 1, padding: '13px', borderRadius: '10px', fontSize: '13px', fontWeight: 600 }}>
+                Close
+              </button>
+              <button className="btn-gold" onClick={() => { printBill(order); onClose(); }}
+                style={{ flex: 1, padding: '13px', borderRadius: '10px', fontSize: '13px', fontWeight: 700 }}>
+                🖨️ Print Bill
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────
    MAIN PAGE
 ───────────────────────────────────────────────── */
 export default function POSPage() {
-  const dispatch = useDispatch();
+  const dispatch   = useDispatch();
   const { items: products } = useSelector((s) => s.products);
-  const cart      = useSelector((s) => s.cart);
-  const subtotal  = useSelector(selectCartSubtotal);
-  const tax       = useSelector(selectCartTax);
-  const total     = useSelector(selectCartTotal);
-  const cartCount = useSelector(selectCartCount);
-  const authUser  = useSelector((s) => s.auth.user);
+  const cart       = useSelector((s) => s.cart);
+  const subtotal   = useSelector(selectCartSubtotal);
+  const tax        = useSelector(selectCartTax);
+  const total      = useSelector(selectCartTotal);
+  const cartCount  = useSelector(selectCartCount);
+  const authUser   = useSelector((s) => s.auth.user);
   const { name: restaurantName } = useRestaurant();
 
-  // Detect if this is a guest session (no logged-in user, accessed via /guest)
-  const isGuest = !authUser;
-  // Get guest name from sessionStorage (set on LoginPage)
+  const isGuest  = !authUser;
   const guestName = isGuest ? (sessionStorage.getItem('guestName') || 'Guest') : null;
 
   const [catFilter,    setCatFilter]    = useState('All');
@@ -702,17 +1211,16 @@ export default function POSPage() {
   const [showBill,     setShowBill]     = useState(null);
   const [submitting,   setSubmitting]   = useState(false);
   const [payMethod,    setPayMethod]    = useState('cash');
-  const [breadCount,   setBreadCount]   = useState(0);   // number of bread baskets after meal
-  const [breadPrice,   setBreadPrice]   = useState(80);  // price per bread basket (editable by staff)
+  const [breadCount,   setBreadCount]   = useState(0);
+  const [breadPrice,   setBreadPrice]   = useState(80);
   const [payConfig,    setPayConfig]    = useState(null);
   const [payDetails,   setPayDetails]   = useState({ referenceNumber: '', senderName: '' });
   const [appModal,     setAppModal]     = useState(null);
   const [confirmModal, setConfirmModal] = useState(false);
   const [custForm,     setCustForm]     = useState({ name: '', phone: '', address: '', deliveryZone: '' });
   const [isMobile,     setIsMobile]     = useState(window.innerWidth < 900);
-
-  // Mobile tabs: 'menu' | 'cart' | 'orders' (orders only for guest)
-  const [mobileTab, setMobileTab] = useState('menu');
+  const [mobileTab,    setMobileTab]    = useState('menu');
+  const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 900);
@@ -720,7 +1228,6 @@ export default function POSPage() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // For guest delivery, pre-fill name from sessionStorage
   useEffect(() => {
     if (isGuest && guestName && guestName !== 'Guest') {
       setCustForm(prev => ({ ...prev, name: guestName }));
@@ -790,17 +1297,22 @@ export default function POSPage() {
     const result = await dispatch(createOrder(orderData));
     setSubmitting(false);
     if (createOrder.fulfilled.match(result)) {
-      setShowBill(result.payload);
       dispatch(clearCart());
       setBreadCount(0);
       setPayDetails({ referenceNumber: '', senderName: '' });
-      toast.success(`🍽️ Order ${result.payload.billId} placed!`);
+      setOrdersRefreshKey(k => k + 1);
+      toast.success(`✅ Order ${result.payload.billId} placed!`);
+      if (isGuest) {
+        // Guest: go directly to Orders tab — they'll see their order with full details
+        setMobileTab('orders');
+      } else {
+        setShowBill(result.payload);
+      }
     } else {
       showAppModal('error', 'Order Failed', result.payload || 'Failed to place order.');
     }
   };
 
-  /* shared cart props for mobile panel */
   const mobileCartProps = {
     cart, cartCount, subtotal, tax, total, grandTotal,
     products, hasBreadItems, breadCount, setBreadCount, breadPrice, setBreadPrice,
@@ -810,27 +1322,13 @@ export default function POSPage() {
     isGuest, guestName,
   };
 
-  /* ────────────────────────────────────────────
-     RENDER
-  ──────────────────────────────────────────── */
   return (
-    /*
-      CRITICAL MOBILE SCROLL FIX:
-      - The entire page is wrapped in a div with minHeight:'100vh' and overflowY:'auto'
-      - For the guest view (no sidebar/header from MainLayout), this wrapper is the scroll root
-      - For the authenticated POS view inside MainLayout, the <main> in MainLayout scrolls
-      - NO fixed heights anywhere — everything is natural flow
-    */
     <div style={{
-      /* For guest (/guest route), this IS the page — give it full scroll capability */
       ...(isGuest ? {
-        minHeight: '100vh',
-        background: 'var(--bg-base)',
-        overflowY: 'auto',
-        WebkitOverflowScrolling: 'touch',
+        minHeight: '100vh', background: 'var(--bg-base)',
+        overflowY: 'auto', WebkitOverflowScrolling: 'touch',
       } : {}),
     }}>
-      {/* Guest header bar */}
       {isGuest && <GuestHeader guestName={guestName} restaurantName={restaurantName} />}
 
       <div style={{ padding: isGuest ? '0 0 80px' : '0' }}>
@@ -839,86 +1337,49 @@ export default function POSPage() {
         {isMobile ? (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
 
-            {/* ── Sticky tab bar ── */}
+            {/* Sticky tab bar */}
             <div style={{
               display: 'flex', borderBottom: '1px solid var(--border)',
               position: 'sticky', top: isGuest ? '62px' : '0', zIndex: 20,
               background: 'var(--bg-base)',
             }}>
-              <button onClick={() => setMobileTab('menu')}
-                style={{ flex: 1, padding: '13px', fontWeight: 700, fontSize: '13px', border: 'none',
-                         cursor: 'pointer',
-                         background: mobileTab === 'menu' ? 'var(--primary-muted)' : 'transparent',
-                         color: mobileTab === 'menu' ? 'var(--primary)' : 'var(--text-muted)',
-                         borderBottom: mobileTab === 'menu' ? '2px solid var(--primary)' : '2px solid transparent' }}>
-                🍽️ Menu
-              </button>
-              <button onClick={() => setMobileTab('cart')}
-                style={{ flex: 1, padding: '13px', fontWeight: 700, fontSize: '13px', border: 'none',
-                         cursor: 'pointer', position: 'relative',
-                         background: mobileTab === 'cart' ? 'var(--primary-muted)' : 'transparent',
-                         color: mobileTab === 'cart' ? 'var(--primary)' : 'var(--text-muted)',
-                         borderBottom: mobileTab === 'cart' ? '2px solid var(--primary)' : '2px solid transparent' }}>
-                🛒 Cart
-                {cartCount > 0 && (
-                  <span style={{ background: 'var(--primary)', color: '#fff', borderRadius: '999px',
-                                 padding: '1px 7px', fontSize: '11px', fontWeight: 700, marginLeft: '5px' }}>
-                    {cartCount}
-                  </span>
-                )}
-              </button>
-              {/* Past Orders tab — guest only */}
-              {isGuest && (
-                <button onClick={() => setMobileTab('orders')}
+              {[
+                { key: 'menu',   label: '🍽️ Menu'  },
+                { key: 'cart',   label: '🛒 Cart', badge: cartCount > 0 ? cartCount : null },
+                ...(isGuest ? [{ key: 'orders', label: '📋 My Orders' }] : []),
+              ].map(tab => (
+                <button key={tab.key} onClick={() => setMobileTab(tab.key)}
                   style={{ flex: 1, padding: '13px', fontWeight: 700, fontSize: '13px', border: 'none',
-                           cursor: 'pointer',
-                           background: mobileTab === 'orders' ? 'var(--primary-muted)' : 'transparent',
-                           color: mobileTab === 'orders' ? 'var(--primary)' : 'var(--text-muted)',
-                           borderBottom: mobileTab === 'orders' ? '2px solid var(--primary)' : '2px solid transparent' }}>
-                  📋 Orders
+                           cursor: 'pointer', position: 'relative',
+                           background: mobileTab === tab.key ? 'var(--primary-muted)' : 'transparent',
+                           color: mobileTab === tab.key ? 'var(--primary)' : 'var(--text-muted)',
+                           borderBottom: mobileTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent' }}>
+                  {tab.label}
+                  {tab.badge && (
+                    <span style={{ background: 'var(--primary)', color: '#fff', borderRadius: '999px',
+                                   padding: '1px 7px', fontSize: '11px', fontWeight: 700, marginLeft: '5px' }}>
+                      {tab.badge}
+                    </span>
+                  )}
                 </button>
-              )}
+              ))}
             </div>
 
             {/* ── MENU TAB ── */}
             {mobileTab === 'menu' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px' }}>
-
-                {/* Controls */}
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <input className="input-dark" placeholder="Search menu..." value={search}
                     onChange={e => setSearch(e.target.value)}
                     style={{ flex: 1, minWidth: '150px', padding: '10px 14px', borderRadius: '8px', fontSize: '14px' }} />
-                  {!isGuest && (
-                    <>
-                      <select className="select-dark" value={cart.orderType}
-                        onChange={e => dispatch(setOrderType(e.target.value))}
-                        style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '14px' }}>
-                        <option value="dine-in">🍽️ Dine In</option>
-                        <option value="takeaway">🥡 Takeaway</option>
-                        <option value="delivery">🛵 Delivery</option>
-                      </select>
-                      {cart.orderType === 'dine-in' && (
-                        <select className="select-dark" value={cart.tableNumber || ''}
-                          onChange={e => dispatch(setTableNumber(Number(e.target.value)))}
-                          style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '14px' }}>
-                          <option value="">Table #</option>
-                          {TABLES.map(t => <option key={t} value={t}>Table {t}</option>)}
-                        </select>
-                      )}
-                    </>
-                  )}
-                  {/* Guest order type selector */}
-                  {isGuest && (
-                    <select className="select-dark" value={cart.orderType}
-                      onChange={e => dispatch(setOrderType(e.target.value))}
-                      style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '14px' }}>
-                      <option value="dine-in">🍽️ Dine In</option>
-                      <option value="takeaway">🥡 Takeaway</option>
-                      <option value="delivery">🛵 Delivery</option>
-                    </select>
-                  )}
-                  {isGuest && cart.orderType === 'dine-in' && (
+                  <select className="select-dark" value={cart.orderType}
+                    onChange={e => dispatch(setOrderType(e.target.value))}
+                    style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '14px' }}>
+                    <option value="dine-in">🍽️ Dine In</option>
+                    <option value="takeaway">🥡 Takeaway</option>
+                    <option value="delivery">🛵 Delivery</option>
+                  </select>
+                  {cart.orderType === 'dine-in' && (
                     <select className="select-dark" value={cart.tableNumber || ''}
                       onChange={e => dispatch(setTableNumber(Number(e.target.value)))}
                       style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '14px' }}>
@@ -928,15 +1389,13 @@ export default function POSPage() {
                   )}
                 </div>
 
-                {/* Category pills — horizontally scrollable */}
+                {/* Category pills */}
                 <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px',
-                              WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none',
-                              msOverflowStyle: 'none' }}>
+                              WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                   {CATEGORIES.map(c => (
                     <button key={c} onClick={() => setCatFilter(c)}
                       style={{ padding: '7px 14px', borderRadius: '999px', fontSize: '12px', fontWeight: 600,
-                               cursor: 'pointer', border: '1px solid', transition: 'all 0.18s', flexShrink: 0,
-                               minHeight: '36px',
+                               cursor: 'pointer', border: '1px solid', transition: 'all 0.18s', flexShrink: 0, minHeight: '36px',
                                background:  catFilter === c ? 'linear-gradient(135deg,#D4AF37,#B8960C)' : 'transparent',
                                borderColor: catFilter === c ? 'transparent' : 'var(--border)',
                                color:       catFilter === c ? '#0D0D0D' : 'var(--text-secondary)' }}>
@@ -945,9 +1404,8 @@ export default function POSPage() {
                   ))}
                 </div>
 
-                {/* Product grid — natural height, no scroll trap */}
-                <div style={{ display: 'grid',
-                              gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))',
+                {/* Product grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))',
                               gap: '10px', paddingBottom: '20px' }}>
                   {filtered.length === 0 ? (
                     <div style={{ gridColumn: '1/-1', textAlign: 'center', paddingTop: '60px',
@@ -960,7 +1418,7 @@ export default function POSPage() {
                   ))}
                 </div>
 
-                {/* Floating cart button when items in cart */}
+                {/* Floating cart button */}
                 {cartCount > 0 && (
                   <div style={{ position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
                                 zIndex: 100, width: 'calc(100% - 32px)', maxWidth: '420px' }}>
@@ -983,22 +1441,19 @@ export default function POSPage() {
               </div>
             )}
 
-            {/* ── STICKY BOTTOM BAR — cart tab, when cart has items ── */}
+            {/* Sticky bottom bar on cart tab */}
             {mobileTab === 'cart' && cartCount > 0 && (
               <div style={{
                 position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 110,
                 background: 'var(--bg-elevated)', borderTop: '1px solid var(--border)',
-                padding: '10px 16px 20px',
-                display: 'flex', gap: '10px',
+                padding: '10px 16px 20px', display: 'flex', gap: '10px',
               }}>
                 <button className="btn-outline-gold"
                   onClick={() => { dispatch(clearCart()); setBreadCount(0); }}
                   style={{ flex: 1, padding: '14px', borderRadius: '10px', fontSize: '13px', fontWeight: 600 }}>
                   🗑 Clear
                 </button>
-                <button className="btn-gold"
-                  onClick={handlePlaceClick}
-                  disabled={submitting}
+                <button className="btn-gold" onClick={handlePlaceClick} disabled={submitting}
                   style={{ flex: 3, padding: '14px', borderRadius: '10px', fontSize: '15px', fontWeight: 700,
                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                   <span>{submitting ? 'Placing…' : '🧧 Place Order'}</span>
@@ -1007,21 +1462,30 @@ export default function POSPage() {
               </div>
             )}
 
-            {/* ── PAST ORDERS TAB (guest only) ── */}
+            {/* ── ORDERS TAB (guest only) ── */}
             {mobileTab === 'orders' && isGuest && (
               <div style={{ padding: '10px' }}>
-                <div style={{ marginBottom: '12px' }}>
-                  <h2 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '20px',
-                               color: 'var(--text-primary)', margin: 0 }}>
-                    Your Past Orders
-                  </h2>
-                  {guestName && guestName !== 'Guest' && (
-                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      Showing orders for "{guestName}"
-                    </p>
-                  )}
+                {/* Guest name header */}
+                <div style={{ marginBottom: '14px', padding: '12px 14px', borderRadius: '10px',
+                              background: 'rgba(212,175,55,0.07)', border: '1px solid rgba(212,175,55,0.2)',
+                              display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(212,175,55,0.15)',
+                                border: '1px solid rgba(212,175,55,0.3)', display: 'flex', alignItems: 'center',
+                                justifyContent: 'center', fontSize: '18px', flexShrink: 0 }}>
+                    👤
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {guestName && guestName !== 'Guest' ? guestName : 'Guest'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Your order history</div>
+                  </div>
                 </div>
-                <GuestPastOrders guestName={guestName} />
+                <GuestPastOrders
+                  guestName={guestName}
+                  refreshKey={ordersRefreshKey}
+                  products={products}
+                />
               </div>
             )}
           </div>
@@ -1032,13 +1496,11 @@ export default function POSPage() {
                         height: isGuest ? 'calc(100vh - 70px)' : 'calc(100vh - 112px)',
                         overflow: 'hidden', gap: '20px' }}>
 
-            {/* ── Two-column body ── */}
             <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
               {/* ════ LEFT — Menu ════ */}
               <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
                             gap: '12px', overflow: 'hidden' }}>
-
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
                   <input className="input-dark" placeholder="Search menu..." value={search}
                     onChange={e => setSearch(e.target.value)}
@@ -1074,8 +1536,7 @@ export default function POSPage() {
                 </div>
 
                 <div style={{ flex: 1, minHeight: 0, overflowY: 'auto',
-                              display: 'grid',
-                              gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
                               gridAutoRows: `${CARD_H}px`, gap: '10px',
                               alignContent: 'start', paddingBottom: '8px' }}>
                   {filtered.length === 0 ? (
@@ -1090,13 +1551,12 @@ export default function POSPage() {
                 </div>
               </div>
 
-              {/* ════ RIGHT — Desktop Cart + (for guest) Past Orders ════ */}
+              {/* ════ RIGHT — Cart + Guest Orders ════ */}
               <div style={{ width: '340px', flexShrink: 0, display: 'flex', flexDirection: 'column',
                             gap: '12px', overflow: 'hidden' }}>
 
-                {/* Guest past orders on desktop — collapsible section above cart */}
                 {isGuest && (
-                  <DesktopGuestOrders guestName={guestName} />
+                  <DesktopGuestOrders guestName={guestName} refreshKey={ordersRefreshKey} products={products} />
                 )}
 
                 <div className="glass-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1127,8 +1587,7 @@ export default function POSPage() {
                                 padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
                     {cart.items.length === 0 ? (
                       <div style={{ height: '100%', display: 'flex', flexDirection: 'column',
-                                    alignItems: 'center', justifyContent: 'center',
-                                    color: 'var(--text-muted)', gap: '8px' }}>
+                                    alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '8px' }}>
                         <span style={{ fontSize: '38px' }}>🛒</span>
                         <p style={{ fontSize: '13px' }}>Cart is empty</p>
                         <p style={{ fontSize: '11px' }}>Tap a menu item to add</p>
@@ -1144,7 +1603,6 @@ export default function POSPage() {
                   {cart.items.length > 0 && (
                     <div style={{ flexShrink: 0, padding: '12px 14px',
                                   borderTop: '1px solid var(--border)', overflowY: 'auto', maxHeight: '55vh' }}>
-
                       {hasBreadItems && (
                         <div style={{ marginBottom: '10px', padding: '9px 12px', borderRadius: '8px',
                                       background: 'rgba(212,175,55,0.07)', border: '1px solid rgba(212,175,55,0.22)' }}>
@@ -1185,7 +1643,6 @@ export default function POSPage() {
                         </div>
                       ))}
 
-                      {/* Discount only for staff, not guest */}
                       {!isGuest && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
                           <span style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1 }}>Discount</span>
@@ -1203,7 +1660,8 @@ export default function POSPage() {
                       </div>
 
                       <div style={{ marginBottom: '10px' }}>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '6px' }}>Payment Method</div>
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase',
+                                      letterSpacing: '0.1em', marginBottom: '6px' }}>Payment Method</div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
                           {PAYMENT_METHODS.map(pm => (
                             <button key={pm.value}
@@ -1281,7 +1739,7 @@ export default function POSPage() {
         )}
       </div>
 
-      {/* ══════════════════ MODALS ══════════════════ */}
+      {/* ── MODALS ── */}
       <AppModal modal={appModal} onClose={closeModal} />
 
       {confirmModal && (
@@ -1346,89 +1804,75 @@ export default function POSPage() {
         </div>
       )}
 
-      {/* Order success modal */}
-      {showBill && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)', zIndex: 500,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div className="glass-card-elevated" style={{ width: '100%', maxWidth: '380px', padding: '26px' }}>
-            <div style={{ textAlign: 'center', marginBottom: '18px' }}>
-              <div style={{ fontSize: '32px', marginBottom: '6px' }}>✅</div>
-              <h2 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '22px', color: 'var(--gold)' }}>Order Placed!</h2>
-              <p style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{showBill.billId}</p>
-              {isGuest && (
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '8px' }}>
-                  Thank you, {guestName}! Your order has been received.
-                </p>
-              )}
-            </div>
-            <div style={{ background: 'var(--bg-elevated)', borderRadius: '8px', padding: '13px', marginBottom: '14px' }}>
-              {showBill.items.map(i => (
-                <div key={i._id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>{i.name} × {i.quantity}</span>
-                  <span style={{ color: 'var(--text-primary)' }}>{formatCurrency(i.price * i.quantity)}</span>
-                </div>
-              ))}
-              <hr className="divider-gold" />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: 'var(--gold)' }}>
-                <span>TOTAL</span><span>{formatCurrency(showBill.totalAmount)}</span>
-              </div>
-            </div>
-            {/* Guest: no print button. Staff: show print button */}
-            {isGuest ? (
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button className="btn-outline-gold" onClick={() => setShowBill(null)}
-                  style={{ flex: 1, padding: '12px', borderRadius: '8px', fontSize: '13px' }}>
-                  Close
-                </button>
-                <button className="btn-gold" onClick={() => { setShowBill(null); setMobileTab('orders'); }}
-                  style={{ flex: 1, padding: '12px', borderRadius: '8px', fontSize: '13px' }}>
-                  📋 My Orders
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button className="btn-outline-gold" onClick={() => setShowBill(null)}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px' }}>Close</button>
-                <button className="btn-gold" onClick={() => { printBill(showBill); setShowBill(null); }}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px' }}>🖨️ Print Bill</button>
-              </div>
-            )}
-          </div>
-        </div>
+      {/* Staff bill/print modal */}
+      {showBill && !isGuest && (
+        <OrderConfirmationModal
+          order={showBill}
+          products={products}
+          isGuest={false}
+          guestName={null}
+          onClose={() => setShowBill(null)}
+          onViewOrders={() => setShowBill(null)}
+        />
       )}
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────────
-   DESKTOP GUEST PAST ORDERS — collapsible sidebar widget
+   DESKTOP GUEST PAST ORDERS — collapsible sidebar
 ───────────────────────────────────────────────── */
-function DesktopGuestOrders({ guestName }) {
-  const [open, setOpen] = useState(false);
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
+function DesktopGuestOrders({ guestName, refreshKey = 0, products = [] }) {
+  const [open,     setOpen]     = useState(false);
+  const [orders,   setOrders]   = useState([]);
+  const [loading,  setLoading]  = useState(false);
   const [selected, setSelected] = useState(null);
+  const pollRef = useRef(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const base = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-      const res = await fetch(`${base}/orders/guest-orders?limit=200`);
+      const res  = await fetch(`${base}/orders/guest-orders?limit=200`);
       const data = await res.json();
-      const all = data?.data?.orders || data?.data || [];
+      const all  = data?.data?.orders || data?.data || [];
       const mine = guestName && guestName !== 'Guest'
         ? all.filter(o => o.customer?.name?.toLowerCase().trim() === guestName.toLowerCase().trim())
         : [];
       setOrders(mine);
     } catch { setOrders([]); }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [guestName]);
 
   useEffect(() => { if (open) load(); }, [open, load]);
+  useEffect(() => { if (open && refreshKey > 0) load(); }, [refreshKey]); // eslint-disable-line
+
+  // Live polling when panel is open
+  useEffect(() => {
+    if (!open) { clearInterval(pollRef.current); return; }
+    pollRef.current = setInterval(() => load(true), 20000);
+    return () => clearInterval(pollRef.current);
+  }, [open, load]);
 
   const statusColor = (s) => {
-    const map = { received: '#3B82F6', confirmed: '#D4AF37', preparing: '#F59E0B', ready: '#10B981', delivered: '#10B981', completed: '#10B981', cancelled: '#EF4444' };
+    const map = {
+      received: '#3B82F6', confirmed: '#D4AF37', preparing: '#F59E0B',
+      ready: '#10B981', delivered: '#3B82F6', completed: '#10B981', cancelled: '#EF4444',
+    };
     return map[s] || '#888';
+  };
+
+  const calcMins = (order) => {
+    if (!order) return 20;
+    let maxCook = 15;
+    order.items?.forEach(item => {
+      const prod = products.find(p => p._id === (item.product?._id || item.product));
+      const ct = prod?.cookingTime || 15;
+      if (ct > maxCook) maxCook = ct;
+    });
+    if (order.orderType === 'delivery')  return maxCook + 20;
+    if (order.orderType === 'takeaway')  return maxCook + 5;
+    return maxCook;
   };
 
   return (
@@ -1436,34 +1880,47 @@ function DesktopGuestOrders({ guestName }) {
       <button onClick={() => setOpen(v => !v)}
         style={{ width: '100%', padding: '12px 16px', background: 'none', border: 'none',
                  cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>📋 Your Past Orders</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '18px' }}>👤</span>
+          <div style={{ textAlign: 'left' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+              {guestName && guestName !== 'Guest' ? guestName : 'Guest'}
+            </div>
+            <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Your order history</div>
+          </div>
+        </div>
         <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div style={{ maxHeight: '240px', overflowY: 'auto', padding: '0 12px 12px',
+        <div style={{ maxHeight: '280px', overflowY: 'auto', padding: '0 12px 12px',
                       display: 'flex', flexDirection: 'column', gap: '6px' }}>
           {loading ? (
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>Loading…</p>
           ) : orders.length === 0 ? (
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No past orders found</p>
-          ) : orders.map(order => (
-            <div key={order._id} onClick={() => setSelected(order)}
-              style={{ padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-elevated)',
-                       border: '1px solid var(--border)', cursor: 'pointer',
-                       display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--gold)' }}>{order.billId}</div>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{formatDateTime(order.createdAt)}</div>
+          ) : orders.map(order => {
+            const sc = statusColor(order.orderStatus);
+            return (
+              <div key={order._id} onClick={() => setSelected(order)}
+                style={{ padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-elevated)',
+                         border: '1px solid var(--border)', cursor: 'pointer',
+                         display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--gold)' }}>{order.billId}</div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    {order.items?.length} item(s) · {formatDateTime(order.createdAt)}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>{formatCurrency(order.totalAmount)}</div>
+                  <div style={{ fontSize: '10px', color: sc, fontWeight: 600, marginTop: '2px' }}>{order.orderStatus}</div>
+                </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>{formatCurrency(order.totalAmount)}</div>
-                <div style={{ fontSize: '10px', color: statusColor(order.orderStatus) }}>{order.orderStatus}</div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
-      {/* Simple order detail modal — no print */}
+      {/* Order detail popup — no print button */}
       {selected && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 600,
                       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
@@ -1476,25 +1933,50 @@ function DesktopGuestOrders({ guestName }) {
               </div>
               <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '22px', cursor: 'pointer' }}>×</button>
             </div>
+
+            {/* Status */}
             <div style={{ marginBottom: '12px' }}>
               <span style={{ padding: '4px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 700,
                              background: `${statusColor(selected.orderStatus)}22`, color: statusColor(selected.orderStatus) }}>
                 {selected.orderStatus?.toUpperCase()}
               </span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '14px' }}>
-              {selected.items?.map((item, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px',
-                                      padding: '7px 10px', borderRadius: '6px', background: 'var(--bg-elevated)' }}>
-                  <span>{item.name} × {item.quantity}</span>
-                  <span style={{ color: 'var(--gold)' }}>{formatCurrency(item.price * item.quantity)}</span>
-                </div>
-              ))}
+
+            {/* Delivery status info */}
+            {selected.orderType === 'delivery' && (
+              <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px',
+                            background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.2)',
+                            fontSize: '12px', color: 'var(--text-secondary)' }}>
+                📍 {selected.customer?.address || 'Delivery address on record'}
+                {selected.customer?.deliveryZone && ` — ${selected.customer.deliveryZone}`}
+              </div>
+            )}
+
+            {/* Items */}
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--gold)', fontWeight: 700,
+                            textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>
+                🍽️ What You Ordered
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                {selected.items?.map((item, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px',
+                                        padding: '8px 10px', borderRadius: '6px', background: 'var(--bg-elevated)' }}>
+                    <span>{item.name} <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>× {item.quantity}</span></span>
+                    <span style={{ color: 'var(--gold)' }}>{formatCurrency(item.price * item.quantity)}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '15px', marginBottom: '16px' }}>
+
+            {/* Total */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '15px', marginBottom: '16px',
+                          paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
               <span style={{ color: 'var(--text-primary)' }}>TOTAL</span>
               <span style={{ color: 'var(--gold)' }}>{formatCurrency(selected.totalAmount)}</span>
             </div>
+
+            {/* Close only — no print for guest */}
             <button className="btn-gold" onClick={() => setSelected(null)} style={{ width: '100%', padding: '11px', borderRadius: '8px', fontSize: '13px', fontWeight: 700 }}>
               Close
             </button>

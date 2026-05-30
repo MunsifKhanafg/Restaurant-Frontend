@@ -21,6 +21,168 @@ const Field = ({ label, children }) => (
   </div>
 );
 
+/* ────────────────────────────────────────────────
+   CUSTOMER ORDER LINK COMPONENT
+   Shows the shareable /guest link + QR code.
+   No external library needed — uses Google Charts QR API.
+──────────────────────────────────────────────── */
+function CustomerOrderLink({ restaurantName }) {
+  const baseUrl = window.location.origin;
+  const orderUrl = `${baseUrl}/guest`;
+  const loginUrl = `${baseUrl}/login`;
+
+  // Google Charts QR code (free, no API key)
+  const qrSrc = `https://chart.googleapis.com/chart?cht=qr&chs=220x220&chl=${encodeURIComponent(orderUrl)}&choe=UTF-8&chld=M|2`;
+
+  const copyToClipboard = (text, label) => {
+    navigator.clipboard.writeText(text).then(() => {
+      alert(`✅ ${label} copied to clipboard!`);
+    }).catch(() => {
+      // fallback
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      alert(`✅ ${label} copied!`);
+    });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+
+      {/* Explanation */}
+      <div style={{ padding: '14px 16px', borderRadius: '10px',
+                    background: 'rgba(212,175,55,0.07)', border: '1px solid rgba(212,175,55,0.25)' }}>
+        <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+          Share this link or QR code with your customers. They open it on their phone,
+          enter their name, and can browse the menu and place orders directly —
+          <strong style={{ color: 'var(--gold)' }}> no app download needed</strong>.
+          Their order appears instantly in your Kitchen and Orders pages.
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+
+        {/* QR Code */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+          <div style={{ padding: '12px', borderRadius: '12px', background: '#fff',
+                        border: '2px solid rgba(212,175,55,0.4)',
+                        boxShadow: '0 4px 20px rgba(212,175,55,0.15)' }}>
+            <img
+              src={qrSrc}
+              alt="Customer Order QR Code"
+              width={160} height={160}
+              style={{ display: 'block', borderRadius: '4px' }}
+              onError={e => { e.target.style.display = 'none'; }}
+            />
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', maxWidth: '160px', lineHeight: 1.5 }}>
+            Scan to open menu on phone
+          </div>
+          <a
+            href={qrSrc}
+            download={`${(restaurantName || 'restaurant').replace(/\s+/g, '-')}-order-qr.png`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: '11px', color: 'var(--gold)', textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            ⬇️ Download QR
+          </a>
+        </div>
+
+        {/* Links */}
+        <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+          {/* Direct order link */}
+          <div>
+            <div style={{ fontSize: '11px', color: 'var(--gold)', textTransform: 'uppercase',
+                          fontWeight: 700, letterSpacing: '0.1em', marginBottom: '6px' }}>
+              📦 Direct Order Link
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', fontSize: '12px',
+                            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                            color: 'var(--gold)', fontFamily: '"JetBrains Mono",monospace',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {orderUrl}
+              </div>
+              <button onClick={() => copyToClipboard(orderUrl, 'Order link')}
+                style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                         cursor: 'pointer', border: '1px solid rgba(212,175,55,0.35)',
+                         background: 'rgba(212,175,55,0.1)', color: 'var(--gold)', whiteSpace: 'nowrap' }}>
+                📋 Copy
+              </button>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '5px' }}>
+              Customer skips name entry — goes directly to menu
+            </div>
+          </div>
+
+          {/* Login page link */}
+          <div>
+            <div style={{ fontSize: '11px', color: 'var(--gold)', textTransform: 'uppercase',
+                          fontWeight: 700, letterSpacing: '0.1em', marginBottom: '6px' }}>
+              👤 Login Page (with name entry)
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', fontSize: '12px',
+                            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                            color: 'var(--text-secondary)', fontFamily: '"JetBrains Mono",monospace',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {loginUrl}
+              </div>
+              <button onClick={() => copyToClipboard(loginUrl, 'Login link')}
+                style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                         cursor: 'pointer', border: '1px solid rgba(212,175,55,0.35)',
+                         background: 'rgba(212,175,55,0.1)', color: 'var(--gold)', whiteSpace: 'nowrap' }}>
+                📋 Copy
+              </button>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '5px' }}>
+              Customer enters name first — their orders are tracked by name
+            </div>
+          </div>
+
+          {/* Step-by-step guide */}
+          <div style={{ padding: '14px', borderRadius: '10px',
+                        background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)' }}>
+            <div style={{ fontSize: '11px', color: '#3B82F6', textTransform: 'uppercase',
+                          fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>
+              📋 How Customers Order
+            </div>
+            {[
+              { n: '1', text: 'Scan QR code or open the link on their phone' },
+              { n: '2', text: 'Tap “Continue as Customer” → enter name' },
+              { n: '3', text: 'Browse menu, add items to cart, choose order type' },
+              { n: '4', text: 'Tap “Place Order” — goes straight to your kitchen!' },
+              { n: '5', text: 'Switch to “My Orders” tab to see live status updates' },
+            ].map(step => (
+              <div key={step.n} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', marginBottom: '7px' }}>
+                <span style={{ width: 20, height: 20, borderRadius: '50%', background: 'rgba(59,130,246,0.2)',
+                               border: '1px solid rgba(59,130,246,0.4)', fontSize: '11px', fontWeight: 700,
+                               color: '#3B82F6', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                               flexShrink: 0 }}>{step.n}</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{step.text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Test link */}
+          <a href="/guest" target="_blank" rel="noreferrer"
+            className="btn-outline-gold"
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                     padding: '11px 20px', borderRadius: '9px', fontSize: '13px', fontWeight: 600,
+                     textDecoration: 'none', cursor: 'pointer' }}>
+            👁️ Preview as Customer
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const showModal = useModal();
   const { refresh: refreshRestaurant } = useRestaurant();
@@ -464,6 +626,11 @@ export default function SettingsPage() {
           style={{ padding: '11px 32px', borderRadius: '8px', fontSize: '13px', fontWeight: '700' }}>
           {savingPay ? 'Saving...' : '💾 Save Payment Settings'}
         </button>
+      </Section>
+
+      {/* ── Customer Ordering Link ── */}
+      <Section title="📱 Customer Ordering Link">
+        <CustomerOrderLink restaurantName={restaurantName} />
       </Section>
 
       {/* Demo Credentials */}
