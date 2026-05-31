@@ -32,6 +32,35 @@ const CATEGORIES = [
   'Desserts','Beverages','Specials',
 ];
 const TABLES = Array.from({ length: 20 }, (_, i) => i + 1);
+
+/* ── Table occupancy helpers ──────────────────────────────────── */
+// Returns the active order on a table (if any) — calls the public orders endpoint
+async function fetchTableStatus(tableNum) {
+  try {
+    const base = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '') || 'http://localhost:5000/api';
+    const res  = await fetch(`${base}/orders/table/${tableNum}/status`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // { occupied: true/false, order: {...} | null }
+    return data?.occupied ? data.order : null;
+  } catch { return null; }
+}
+
+// Compute cooking-time estimate from an existing order (max item cook time + 10 min eating buffer)
+function estimateWaitMins(order) {
+  if (!order) return 30;
+  let maxCook = 10;
+  (order.items || []).forEach(item => {
+    // product is populated: { cookingTime, name } OR just an ObjectId string
+    const ct = item.product?.cookingTime || 15;
+    if (ct > maxCook) maxCook = ct;
+  });
+  const elapsedMins = order.createdAt
+    ? Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000)
+    : 0;
+  const totalMins = maxCook + 20; // cook time + eating buffer
+  return Math.max(1, totalMins - elapsedMins);
+}
 const DELIVERY_CHARGE = 150;
 const PAYMENT_METHODS = [
   { value: 'cash',        label: '💵 Cash' },
@@ -86,13 +115,37 @@ function WelcomeScreen({ restaurantName, onStart }) {
   const [phone,     setPhone]     = useState('');
   const [address,   setAddress]   = useState('');
   const [error,     setError]     = useState('');
+  const [checkingTable, setCheckingTable] = useState(false);
 
-  const handleStart = () => {
+  // Table-occupied modal state
+  const [occupiedModal, setOccupiedModal] = useState(null);
+  // { waitMins, existingOrder }
+
+  const handleStart = async () => {
     if (!name.trim())                              return setError('Please enter your name.');
     if (orderType === 'dine-in' && !tableNum)      return setError('Please select a table.');
     if (orderType === 'delivery' && !phone.trim()) return setError('Phone number is required for delivery.');
+
+    // Check table occupancy for dine-in
+    if (orderType === 'dine-in' && tableNum) {
+      setCheckingTable(true);
+      const activeOrder = await fetchTableStatus(Number(tableNum));
+      setCheckingTable(false);
+      if (activeOrder) {
+        const waitMins = estimateWaitMins(activeOrder);
+        setOccupiedModal({ waitMins, existingOrder: activeOrder });
+        return;
+      }
+    }
+
     sessionStorage.setItem('guestName', name.trim());
     onStart({ name: name.trim(), orderType, tableNum: Number(tableNum) || null, phone, address });
+  };
+
+  const handleWaitAndOrder = () => {
+    setOccupiedModal(null);
+    sessionStorage.setItem('guestName', name.trim());
+    onStart({ name: name.trim(), orderType, tableNum: Number(tableNum) || null, phone, address, tableIsOccupied: true });
   };
 
   return (
@@ -101,6 +154,64 @@ function WelcomeScreen({ restaurantName, onStart }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '20px',
     }}>
+      {/* ── Table-Occupied Modal ── */}
+      {occupiedModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 500,
+          background: 'rgba(0,0,0,0.78)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+        }}>
+          <div style={{
+            width: '100%', maxWidth: '380px',
+            background: 'var(--bg-elevated)', borderRadius: '20px',
+            border: '1.5px solid rgba(245,158,11,0.45)',
+            padding: '30px 24px',
+            boxShadow: '0 12px 50px rgba(0,0,0,0.6)',
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: '52px', marginBottom: '10px' }}>👨‍🍴</div>
+            <h2 style={{
+              fontFamily: '"Cormorant Garamond",serif', fontSize: '22px',
+              color: 'var(--gold)', margin: '0 0 10px',
+            }}>Table {tableNum} is Occupied</h2>
+            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.65, margin: '0 0 18px' }}>
+              There is already a customer at this table. Based on their cooking and eating time, the table will be
+              free in approximately
+            </p>
+            <div style={{
+              fontSize: '52px', fontWeight: 700, color: 'var(--gold)',
+              fontFamily: '"JetBrains Mono",monospace',
+              marginBottom: '6px',
+            }}>
+              ~{occupiedModal.waitMins} min
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '24px' }}>
+              You can wait and place your order now — it will be sent to the kitchen once this table is ready.
+              Or select a different table.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                onClick={handleWaitAndOrder}
+                className="btn-gold"
+                style={{ padding: '14px', borderRadius: '12px', fontSize: '15px', fontWeight: 700 }}
+              >
+                ⏳ Wait & Order Now
+              </button>
+              <button
+                onClick={() => { setOccupiedModal(null); setTableNum(''); }}
+                style={{
+                  padding: '13px', borderRadius: '12px', fontSize: '14px', fontWeight: 600,
+                  border: '1px solid rgba(212,175,55,0.3)', background: 'transparent',
+                  color: 'var(--text-secondary)', cursor: 'pointer',
+                }}
+              >
+                🔄 Select Another Table
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{
         width: '100%', maxWidth: '440px',
         background: 'var(--bg-elevated)',
@@ -203,9 +314,11 @@ function WelcomeScreen({ restaurantName, onStart }) {
         )}
 
         <button className="btn-gold" onClick={handleStart}
+          disabled={checkingTable}
           style={{ width: '100%', padding: '15px', borderRadius: '12px',
-                   fontSize: '16px', fontWeight: 700, letterSpacing: '0.04em' }}>
-          Browse Menu →
+                   fontSize: '16px', fontWeight: 700, letterSpacing: '0.04em',
+                   opacity: checkingTable ? 0.75 : 1 }}>
+          {checkingTable ? '⏳ Checking table...' : 'Browse Menu →'}
         </button>
       </div>
     </div>

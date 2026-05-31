@@ -37,6 +37,13 @@ export function RestaurantProvider({ children }) {
 
   useEffect(() => { load(); }, []);
 
+  // Sync document title whenever restaurant name changes
+  useEffect(() => {
+    if (config.name && !config.loading) {
+      document.title = `${config.name} — Management System`;
+    }
+  }, [config.name, config.loading]);
+
   return (
     <RestaurantContext.Provider value={{ ...config, refresh: load }}>
       {children}

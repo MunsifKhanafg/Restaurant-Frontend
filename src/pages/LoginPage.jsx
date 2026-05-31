@@ -36,8 +36,6 @@ export default function LoginPage() {
   const { loading, error } = useSelector((s) => s.auth);
   const { name: restaurantName } = useRestaurant();
   const [form, setForm] = useState({ email: '', password: '' });
-  const [guestName, setGuestName] = useState('');
-  const [showGuestInput, setShowGuestInput] = useState(false);
 
   // ── Staff/Admin manual sign-in ──
   const handleSubmit = async (e) => {
@@ -57,11 +55,9 @@ export default function LoginPage() {
     }
   };
 
-  // ── Customer quick-access ──
+  // ── Customer quick-access — go directly, no name needed ──
   const handleCustomerContinue = () => {
-    const name = guestName.trim() || 'Guest';
-    // Store guest name in sessionStorage so POSPage can read it
-    sessionStorage.setItem('guestName', name);
+    sessionStorage.removeItem('guestName'); // clear any old name
     navigate('/guest');
   };
 
@@ -190,64 +186,27 @@ export default function LoginPage() {
           <div style={{ flex: 1, height: '1px', background: 'rgba(212,175,55,0.15)' }} />
         </div>
 
-        {/* Guest name panel — expands when button clicked */}
-        {showGuestInput ? (
-          <div className="glass-card" style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
-              👋 What's your name? (optional)
-            </p>
-            <input
-              className="input-dark"
-              placeholder="e.g. Ahmed"
-              value={guestName}
-              onChange={e => setGuestName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCustomerContinue()}
-              autoFocus
-              style={{ padding: '11px 14px', borderRadius: '8px', fontSize: '14px', width: '100%' }}
-            />
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={() => setShowGuestInput(false)}
-                style={{
-                  flex: 1, padding: '11px', borderRadius: '8px', fontSize: '13px',
-                  fontWeight: '600', cursor: 'pointer',
-                  border: '1px solid rgba(212,175,55,0.25)',
-                  background: 'transparent', color: 'var(--text-muted)',
-                }}
-              >
-                Back
-              </button>
-              <button
-                onClick={handleCustomerContinue}
-                className="btn-gold"
-                style={{ flex: 2, padding: '11px', borderRadius: '8px', fontSize: '14px', fontWeight: '700' }}
-              >
-                🍽️ Continue to Menu
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => setShowGuestInput(true)}
-            disabled={loading}
-            style={{
-              width: '100%', padding: '14px', borderRadius: '10px', fontSize: '14px',
-              fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer',
-              border: '1px solid rgba(212,175,55,0.35)',
-              background: 'rgba(212,175,55,0.07)', color: 'var(--gold)',
-              letterSpacing: '0.03em', transition: 'all 0.2s',
-              fontFamily: '"DM Sans", sans-serif',
-              opacity: loading ? 0.6 : 1,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-              minHeight: '52px',
-            }}
-            onMouseEnter={e => { if (!loading) e.currentTarget.style.background = 'rgba(212,175,55,0.14)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(212,175,55,0.07)'; }}
-          >
-            <span style={{ fontSize: '18px' }}>🍽️</span>
-            <span>Continue as Customer</span>
-          </button>
-        )}
+        {/* Customer quick-access — single button, no name step */}
+        <button
+          onClick={handleCustomerContinue}
+          disabled={loading}
+          style={{
+            width: '100%', padding: '14px', borderRadius: '10px', fontSize: '14px',
+            fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer',
+            border: '1px solid rgba(212,175,55,0.35)',
+            background: 'rgba(212,175,55,0.07)', color: 'var(--gold)',
+            letterSpacing: '0.03em', transition: 'all 0.2s',
+            fontFamily: '"DM Sans", sans-serif',
+            opacity: loading ? 0.6 : 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+            minHeight: '52px',
+          }}
+          onMouseEnter={e => { if (!loading) e.currentTarget.style.background = 'rgba(212,175,55,0.14)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(212,175,55,0.07)'; }}
+        >
+          <span style={{ fontSize: '18px' }}>🍽️</span>
+          <span>Continue as Customer</span>
+        </button>
 
         <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '28px' }}>
           {restaurantName || 'My Restaurant'} &copy; {new Date().getFullYear()} — All rights reserved
