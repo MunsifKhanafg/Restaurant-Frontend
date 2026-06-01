@@ -25,7 +25,47 @@ import {
 import { formatCurrency, formatDateTime } from '../utils/helpers';
 import { useRestaurant } from '../hooks/useRestaurant';
 
-/* ─── constants ─────────────────────────────────────────────────── */
+/* ── localStorage order history ────────────────────────────────
+   We save { id, billId, createdAt, orderType, tableNumber, status }
+   per order so customers can revisit even after closing the tab.
+──────────────────────────────────────────────────────────────── */
+const LS_KEY = 'aurum_my_orders';
+
+function loadSavedOrders() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveOrderToHistory(order) {
+  const existing = loadSavedOrders();
+  const entry = {
+    id:          order._id,
+    billId:      order.billId,
+    createdAt:   order.createdAt,
+    orderType:   order.orderType,
+    tableNumber: order.tableNumber,
+    totalAmount: order.totalAmount,
+    status:      order.orderStatus,
+  };
+  // deduplicate by id
+  const updated = [entry, ...existing.filter(o => o.id !== order._id)].slice(0, 20);
+  localStorage.setItem(LS_KEY, JSON.stringify(updated));
+}
+function updateOrderStatusInHistory(orderId, status) {
+  const existing = loadSavedOrders();
+  const updated  = existing.map(o => o.id === orderId ? { ...o, status } : o);
+  localStorage.setItem(LS_KEY, JSON.stringify(updated));
+}
+
+/* ── Public order fetcher (no auth needed) ─────────────────── */
+async function fetchOrderById(orderId) {
+  try {
+    const base = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '') || 'http://localhost:5000/api';
+    const res  = await fetch(`${base}/orders/${orderId}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.data || data?.order || data || null;
+  } catch { return null; }
+}
 const CATEGORIES = [
   'All','Starters','Main Course','Grill & BBQ','Seafood',
   'Pasta & Rice','Pizza','Burgers','Salads','Soups',
@@ -108,7 +148,7 @@ const FRIENDLY_STATUS = (s, type) => ({
 /* ═══════════════════════════════════════════════════════════════
    SCREEN 1 — WELCOME
 ═══════════════════════════════════════════════════════════════ */
-function WelcomeScreen({ restaurantName, onStart }) {
+function WelcomeScreen({ restaurantName, onStart, onMyOrders }) {
   const [name,      setName]      = useState(sessionStorage.getItem('guestName') || '');
   const [orderType, setOType]     = useState('dine-in');
   const [tableNum,  setTableNum]  = useState('');
@@ -116,6 +156,7 @@ function WelcomeScreen({ restaurantName, onStart }) {
   const [address,   setAddress]   = useState('');
   const [error,     setError]     = useState('');
   const [checkingTable, setCheckingTable] = useState(false);
+  const hasPastOrders = loadSavedOrders().length > 0;
 
   // Table-occupied modal state
   const [occupiedModal, setOccupiedModal] = useState(null);
@@ -320,6 +361,21 @@ function WelcomeScreen({ restaurantName, onStart }) {
                    opacity: checkingTable ? 0.75 : 1 }}>
           {checkingTable ? '⏳ Checking table...' : 'Browse Menu →'}
         </button>
+
+        {/* My Orders — only show if this device has past orders */}
+        {hasPastOrders && (
+          <button
+            onClick={onMyOrders}
+            style={{
+              width: '100%', marginTop: '10px', padding: '13px', borderRadius: '12px',
+              fontSize: '14px', fontWeight: 600, cursor: 'pointer',
+              border: '1px solid rgba(212,175,55,0.3)',
+              background: 'transparent', color: 'var(--gold)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+            }}>
+            <span>📋</span> My Orders
+          </button>
+        )}
       </div>
     </div>
   );
@@ -965,7 +1021,7 @@ function CheckoutScreen({ customerInfo, cart, grandTotal, restaurantName,
 /* ═══════════════════════════════════════════════════════════════
    SCREEN 4 — ORDER TRACKING
 ═══════════════════════════════════════════════════════════════ */
-function TrackingScreen({ order: initialOrder, products, restaurantName, onOrderMore }) {
+function TrackingScreen({ order: initialOrder, products, restaurantName, onOrderMore, onStatusChange, onMyOrders }) {
   const [order,    setOrder]    = useState(initialOrder);
   const [secsLeft, setSecsLeft] = useState(null);
   const timerRef = useRef(null);
@@ -996,7 +1052,10 @@ function TrackingScreen({ order: initialOrder, products, restaurantName, onOrder
         if (!res.ok) return;
         const data = await res.json();
         const updated = data?.data || data?.order || data;
-        if (updated?._id) setOrder(updated);
+        if (updated?._id) {
+          setOrder(updated);
+          onStatusChange?.(updated._id, updated.orderStatus);
+        }
       } catch {}
     };
     poll();
@@ -1316,10 +1375,186 @@ function TrackingScreen({ order: initialOrder, products, restaurantName, onOrder
           🍽️ Order More
         </button>
         <button className="btn-gold"
-          onClick={() => window.location.reload()}
+          onClick={onMyOrders}
           style={{ flex: 1, padding: '14px', borderRadius: '12px', fontSize: '14px', fontWeight: 700 }}>
-          📋 New Order
+          📋 My Orders
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCREEN 5 — MY ORDERS HISTORY
+═══════════════════════════════════════════════════════════════ */
+function MyOrdersScreen({ restaurantName, onViewOrder, onNewOrder, onBack }) {
+  const [savedOrders, setSavedOrders] = useState(loadSavedOrders);
+  const [loading,     setLoading]     = useState(false);
+  const [fetched,     setFetched]     = useState({}); // id → full order object
+
+  // On mount: refresh statuses from server
+  useEffect(() => {
+    if (savedOrders.length === 0) return;
+    setLoading(true);
+    Promise.all(
+      savedOrders.map(o => fetchOrderById(o.id).then(full => {
+        if (full) {
+          updateOrderStatusInHistory(o.id, full.orderStatus);
+          return { ...o, status: full.orderStatus, full };
+        }
+        return o;
+      }))
+    ).then(updated => {
+      setSavedOrders(updated);
+      const map = {};
+      updated.forEach(o => { if (o.full) map[o.id] = o.full; });
+      setFetched(map);
+      setLoading(false);
+    });
+  }, []);
+
+  const statusColor = (s) => STATUS_COLOR[s] || '#888';
+  const isActive    = (s) => ['received','confirmed','preparing','ready','delivered'].includes(s);
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg-base)',
+                  display: 'flex', flexDirection: 'column' }}>
+
+      {/* Header */}
+      <div style={{
+        background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)',
+        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '12px',
+        position: 'sticky', top: 0, zIndex: 10,
+      }}>
+        <button onClick={onBack}
+          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: '8px',
+                   padding: '6px 12px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '12px' }}>
+          ← Back
+        </button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '20px',
+                        color: 'var(--gold)' }}>{restaurantName}</div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>My Orders</div>
+        </div>
+        {loading && (
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', animation: 'pulse 1.5s infinite' }}>
+            Refreshing...
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px',
+                    maxWidth: '600px', margin: '0 auto', width: '100%' }}>
+
+        {savedOrders.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+            <div style={{ fontSize: '52px', marginBottom: '16px' }}>🧧</div>
+            <h3 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '22px',
+                         color: 'var(--gold)', margin: '0 0 8px' }}>No Orders Yet</h3>
+            <p style={{ fontSize: '14px', color: 'var(--text-muted)', margin: '0 0 24px' }}>
+              Your orders will appear here after you place one.
+            </p>
+            <button className="btn-gold" onClick={onNewOrder}
+              style={{ padding: '14px 28px', borderRadius: '12px', fontSize: '15px', fontWeight: 700 }}>
+              Browse Menu →
+            </button>
+          </div>
+        ) : (
+          savedOrders.map(order => {
+            const sc = statusColor(order.status);
+            const active = isActive(order.status);
+            return (
+              <div key={order.id}
+                onClick={() => onViewOrder(fetched[order.id] || order)}
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: `1.5px solid ${active ? `${sc}55` : 'var(--border)'}`,
+                  borderRadius: '16px', padding: '16px 18px',
+                  cursor: 'pointer', transition: 'all 0.2s',
+                  boxShadow: active ? `0 4px 20px ${sc}22` : 'none',
+                }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--gold)'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = active ? `${sc}55` : 'var(--border)'}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between',
+                              alignItems: 'flex-start', marginBottom: '10px' }}>
+                  <div>
+                    <div style={{ fontFamily: '"JetBrains Mono",monospace', fontSize: '14px',
+                                  color: 'var(--gold)', fontWeight: 700 }}>
+                      {order.billId || `#${order.id?.slice(-6).toUpperCase()}`}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      {order.createdAt ? formatDateTime(order.createdAt) : ''}
+                    </div>
+                  </div>
+                  <span style={{
+                    fontSize: '11px', fontWeight: 700, padding: '4px 10px',
+                    borderRadius: '999px', background: `${sc}18`,
+                    border: `1px solid ${sc}44`, color: sc,
+                    textTransform: 'capitalize',
+                  }}>
+                    {active && '● '}{FRIENDLY_STATUS(order.status, order.orderType)}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between',
+                              alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{
+                      fontSize: '12px', color: 'var(--text-secondary)',
+                      background: 'var(--bg-surface)', padding: '3px 10px',
+                      borderRadius: '999px', border: '1px solid var(--border)',
+                    }}>
+                      {order.orderType === 'dine-in' ? `🍽️ Table ${order.tableNumber}`
+                       : order.orderType === 'delivery' ? '🛵 Delivery'
+                       : '🥡 Takeaway'}
+                    </span>
+                    {active && (
+                      <span style={{ fontSize: '11px', color: '#F59E0B',
+                                     display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        ⏳ Active
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {order.totalAmount && (
+                      <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gold)' }}>
+                        {formatCurrency(order.totalAmount)}
+                      </span>
+                    )}
+                    <span style={{ fontSize: '16px', color: 'var(--text-muted)' }}>›</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+
+        {savedOrders.length > 0 && (
+          <button className="btn-gold" onClick={onNewOrder}
+            style={{ marginTop: '8px', padding: '14px', borderRadius: '12px',
+                     fontSize: '15px', fontWeight: 700 }}>
+            + Place New Order
+          </button>
+        )}
+
+        {/* Clear history */}
+        {savedOrders.length > 0 && (
+          <button
+            onClick={() => {
+              if (window.confirm('Clear all order history from this device?')) {
+                localStorage.removeItem(LS_KEY);
+                setSavedOrders([]);
+              }
+            }}
+            style={{
+              background: 'none', border: '1px solid rgba(239,68,68,0.3)',
+              color: '#EF4444', borderRadius: '10px', padding: '10px',
+              cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+            }}>
+            🗑 Clear History
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1338,7 +1573,7 @@ export default function CustomerPage() {
   const cartCount = useSelector(selectCartCount);
   const { name: restaurantName } = useRestaurant();
 
-  const [screen,      setScreen]      = useState('welcome'); // welcome | menu | checkout | tracking
+  const [screen,      setScreen]      = useState('welcome'); // welcome | menu | checkout | tracking | myorders
   const [custInfo,    setCustInfo]    = useState(null);
   const [placedOrder, setPlacedOrder] = useState(null);
   const [submitting,  setSubmitting]  = useState(false);
@@ -1391,7 +1626,9 @@ export default function CustomerPage() {
     if (createOrder.fulfilled.match(result)) {
       dispatch(clearCart());
       sessionStorage.setItem('guestName', custInfo.name);
-      setPlacedOrder(result.payload);
+      const order = result.payload;
+      saveOrderToHistory(order);          // ← persist to localStorage
+      setPlacedOrder(order);
       setScreen('tracking');
     }
   };
@@ -1402,9 +1639,15 @@ export default function CustomerPage() {
     setScreen('menu');
   };
 
+  // View a specific order from history
+  const handleViewOrder = (order) => {
+    setPlacedOrder(order);
+    setScreen('tracking');
+  };
+
   // ── Render ──
   if (screen === 'welcome') {
-    return <WelcomeScreen restaurantName={restaurantName} onStart={handleStart} />;
+    return <WelcomeScreen restaurantName={restaurantName} onStart={handleStart} onMyOrders={() => setScreen('myorders')} />;
   }
 
   if (screen === 'menu') {
@@ -1446,6 +1689,19 @@ export default function CustomerPage() {
         products={products}
         restaurantName={restaurantName}
         onOrderMore={handleOrderMore}
+        onStatusChange={(id, status) => updateOrderStatusInHistory(id, status)}
+        onMyOrders={() => setScreen('myorders')}
+      />
+    );
+  }
+
+  if (screen === 'myorders') {
+    return (
+      <MyOrdersScreen
+        restaurantName={restaurantName}
+        onViewOrder={handleViewOrder}
+        onNewOrder={() => setScreen('welcome')}
+        onBack={() => setScreen('welcome')}
       />
     );
   }
