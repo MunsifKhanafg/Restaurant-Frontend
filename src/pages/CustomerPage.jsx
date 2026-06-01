@@ -655,28 +655,26 @@ function CartPanel({ cart, cartCount, grandTotal, customerInfo, dispatch, onClos
       display: 'flex', alignItems: 'flex-end',
     }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{
-        width: '100%', maxHeight: '85vh', background: 'var(--bg-elevated)',
+        width: '100%', maxHeight: '88vh', background: 'var(--bg-elevated)',
         borderRadius: '20px 20px 0 0', overflowY: 'auto',
         border: '1px solid rgba(212,175,55,0.2)',
         boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
+        display: 'flex', flexDirection: 'column',
       }}>
         {/* Handle bar */}
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 0' }}>
-          <div style={{ width: 40, height: 4, borderRadius: 999,
-                        background: 'var(--border)' }} />
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 0', flexShrink: 0 }}>
+          <div style={{ width: 40, height: 4, borderRadius: 999, background: 'var(--border)' }} />
         </div>
 
         {/* Header */}
         <div style={{
-          padding: '12px 20px 16px', display: 'flex',
+          padding: '10px 16px 12px', display: 'flex',
           justifyContent: 'space-between', alignItems: 'center',
-          borderBottom: '1px solid var(--border)',
+          borderBottom: '1px solid var(--border)', flexShrink: 0,
         }}>
           <h2 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '20px',
-                       color: 'var(--text-primary)', margin: 0 }}>
-            Your Cart
-          </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                       color: 'var(--text-primary)', margin: 0 }}>Your Cart</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '12px', color: 'var(--gold)',
                            background: 'rgba(212,175,55,0.1)', padding: '3px 10px',
                            borderRadius: '999px' }}>
@@ -684,79 +682,104 @@ function CartPanel({ cart, cartCount, grandTotal, customerInfo, dispatch, onClos
             </span>
             <button onClick={onClose}
               style={{ background: 'none', border: 'none', color: 'var(--text-muted)',
-                       fontSize: '22px', cursor: 'pointer', padding: '0 4px' }}>×</button>
+                       fontSize: '24px', cursor: 'pointer', padding: '0 2px',
+                       lineHeight: 1, display: 'flex', alignItems: 'center' }}>×</button>
           </div>
         </div>
 
-        {/* Items */}
-        <div style={{ padding: '12px 20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Items — scrollable */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px',
+                      display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {cart.items.map(item => (
             <div key={item.product} style={{
-              display: 'flex', alignItems: 'center', gap: '12px',
-              padding: '10px 14px', borderRadius: '10px',
               background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: '12px', padding: '10px 12px',
             }}>
-              <div style={{ flex: 1 }}>
-                <p style={{ margin: 0, fontSize: '13px', fontWeight: 600,
-                            color: 'var(--text-primary)' }}>{item.name}</p>
-                <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--gold)' }}>
-                  {formatCurrency(item.price)}
-                </p>
+              {/* Row 1: name + delete */}
+              <div style={{ display: 'flex', justifyContent: 'space-between',
+                            alignItems: 'flex-start', marginBottom: '8px' }}>
+                <div style={{ flex: 1, minWidth: 0, marginRight: '8px' }}>
+                  <p style={{ margin: 0, fontSize: '13px', fontWeight: 600,
+                              color: 'var(--text-primary)',
+                              whiteSpace: 'nowrap', overflow: 'hidden',
+                              textOverflow: 'ellipsis' }}>{item.name}</p>
+                  <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--gold)' }}>
+                    {formatCurrency(item.price)} each
+                  </p>
+                </div>
+                <button onClick={() => dispatch(removeItem(item.product))}
+                  style={{ background: 'none', border: 'none', color: '#EF4444',
+                           cursor: 'pointer', fontSize: '16px', padding: '0',
+                           flexShrink: 0, lineHeight: 1 }}>🗑</button>
               </div>
-              {/* Qty stepper */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button onClick={() => {
-                  if (item.quantity <= 1) dispatch(removeItem(item.product));
-                  else dispatch(updateQuantity({ product: item.product, quantity: item.quantity - 1 }));
-                }} style={{ width: 30, height: 30, borderRadius: '7px', border: '1px solid var(--border)',
-                            background: 'var(--bg-elevated)', color: 'var(--text-primary)', cursor: 'pointer',
-                            fontSize: '16px', fontWeight: 700 }}>−</button>
-                <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)',
-                               minWidth: '22px', textAlign: 'center' }}>{item.quantity}</span>
-                <button onClick={() => dispatch(updateQuantity({ product: item.product, quantity: item.quantity + 1 }))}
-                  style={{ width: 30, height: 30, borderRadius: '7px', border: '1px solid var(--border)',
-                           background: 'var(--bg-elevated)', color: 'var(--text-primary)', cursor: 'pointer',
-                           fontSize: '16px', fontWeight: 700 }}>+</button>
+              {/* Row 2: qty stepper + line total */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0',
+                              background: 'var(--bg-elevated)', borderRadius: '8px',
+                              border: '1px solid var(--border)', overflow: 'hidden' }}>
+                  <button
+                    onClick={() => {
+                      if (item.quantity <= 1) dispatch(removeItem(item.product));
+                      else dispatch(updateQuantity({ product: item.product, quantity: item.quantity - 1 }));
+                    }}
+                    style={{ width: 36, height: 36, border: 'none', borderRight: '1px solid var(--border)',
+                             background: 'transparent', color: 'var(--text-primary)',
+                             cursor: 'pointer', fontSize: '18px', fontWeight: 700,
+                             display: 'flex', alignItems: 'center', justifyContent: 'center' }}>-</button>
+                  <span style={{ minWidth: '36px', textAlign: 'center', fontSize: '15px',
+                                 fontWeight: 700, color: 'var(--gold)', padding: '0 4px' }}>
+                    {item.quantity}
+                  </span>
+                  <button
+                    onClick={() => dispatch(updateQuantity({ product: item.product, quantity: item.quantity + 1 }))}
+                    style={{ width: 36, height: 36, border: 'none', borderLeft: '1px solid var(--border)',
+                             background: 'transparent', color: 'var(--text-primary)',
+                             cursor: 'pointer', fontSize: '18px', fontWeight: 700,
+                             display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                </div>
+                <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--gold)' }}>
+                  {formatCurrency(item.price * item.quantity)}
+                </span>
               </div>
-              <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--gold)',
-                             minWidth: '72px', textAlign: 'right' }}>
-                {formatCurrency(item.price * item.quantity)}
-              </span>
-              <button onClick={() => dispatch(removeItem(item.product))}
-                style={{ background: 'none', border: 'none', color: '#EF4444',
-                         cursor: 'pointer', fontSize: '16px', padding: '4px' }}>🗑</button>
             </div>
           ))}
         </div>
 
-        {/* Summary */}
-        <div style={{ padding: '0 20px 32px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0 10px' }} />
-          {[
-            ['Subtotal',              formatCurrency(subtotal)],
-            [`Tax (${cart.taxPercent}%)`, formatCurrency(tax)],
-            ...(deliveryFee > 0 ? [['🛵 Delivery Charge', formatCurrency(deliveryFee)]] : []),
-          ].map(([label, val]) => (
-            <div key={label} style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{label}</span>
-              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{val}</span>
+        {/* Summary + actions — sticky bottom */}
+        <div style={{
+          flexShrink: 0, padding: '12px 16px 28px',
+          borderTop: '1px solid var(--border)',
+          background: 'var(--bg-elevated)',
+        }}>
+          {/* Totals */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '12px' }}>
+            {[
+              ['Subtotal',                   formatCurrency(subtotal)],
+              [`Tax (${cart.taxPercent}%)`,  formatCurrency(tax)],
+              ...(deliveryFee > 0 ? [['Delivery', formatCurrency(deliveryFee)]] : []),
+            ].map(([label, val]) => (
+              <div key={label} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{label}</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{val}</span>
+              </div>
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between',
+                          paddingTop: '8px', borderTop: '1px solid var(--border)', marginTop: '4px' }}>
+              <span style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>TOTAL</span>
+              <span style={{ fontSize: '19px', fontWeight: 700, color: 'var(--gold)' }}>
+                {formatCurrency(grandTotal)}
+              </span>
             </div>
-          ))}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px',
-                        paddingTop: '10px', borderTop: '1px solid var(--border)' }}>
-            <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>TOTAL</span>
-            <span style={{ fontSize: '20px', fontWeight: 700, color: 'var(--gold)' }}>
-              {formatCurrency(grandTotal)}
-            </span>
           </div>
-          <div style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
+          {/* Buttons */}
+          <div style={{ display: 'flex', gap: '10px' }}>
             <button className="btn-outline-gold"
               onClick={() => { dispatch(clearCart()); onClose(); }}
-              style={{ flex: 1, padding: '14px', borderRadius: '12px', fontSize: '14px' }}>
+              style={{ flex: 1, padding: '13px', borderRadius: '12px', fontSize: '14px', fontWeight: 600 }}>
               🗑 Clear
             </button>
             <button className="btn-gold" onClick={onCheckout}
-              style={{ flex: 2, padding: '14px', borderRadius: '12px', fontSize: '15px', fontWeight: 700 }}>
+              style={{ flex: 2, padding: '13px', borderRadius: '12px', fontSize: '15px', fontWeight: 700 }}>
               Checkout →
             </button>
           </div>
@@ -1605,14 +1628,15 @@ export default function CustomerPage() {
   const handlePlaceOrder = async (payMethod, payDetails) => {
     setSubmitting(true);
     const orderData = {
-      orderType: custInfo.orderType,
+      orderType:   custInfo.orderType,
       tableNumber: custInfo.tableNum,
       items: cart.items.map(i => ({
-        product: i.product, quantity: i.quantity, specialInstructions: i.specialInstructions || '',
+        product: i.product, quantity: i.quantity,
+        specialInstructions: i.specialInstructions || '',
       })),
       customer: {
         name:         custInfo.name,
-        phone:        custInfo.phone || '',
+        phone:        custInfo.phone   || '',
         address:      custInfo.address || '',
         deliveryZone: custInfo.deliveryZone || '',
       },
@@ -1621,15 +1645,29 @@ export default function CustomerPage() {
       discountAmount: 0,
       deliveryCharge: deliveryFee,
     };
-    const result = await dispatch(createOrder(orderData));
-    setSubmitting(false);
-    if (createOrder.fulfilled.match(result)) {
+
+    try {
+      // Direct fetch — no auth token needed for guest orders
+      const base = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '') || 'http://localhost:5000/api';
+      const res  = await fetch(`${base}/orders`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(orderData),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.message || json?.error || `Server error ${res.status}`);
+      }
+      const order = json?.data || json;
       dispatch(clearCart());
       sessionStorage.setItem('guestName', custInfo.name);
-      const order = result.payload;
-      saveOrderToHistory(order);          // ← persist to localStorage
+      saveOrderToHistory(order);
       setPlacedOrder(order);
       setScreen('tracking');
+    } catch (err) {
+      alert(`❌ Could not place order: ${err.message}`);
+    } finally {
+      setSubmitting(false);
     }
   };
 
