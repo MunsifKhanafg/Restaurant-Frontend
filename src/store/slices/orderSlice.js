@@ -74,22 +74,44 @@ const orderSlice = createSlice({
   },
   reducers: {
     addSocketOrder: (state, action) => {
+      const order = action.payload;
       /* avoid duplicate if server also returns it via HTTP */
-      const exists = state.kitchenOrders.some(o => o._id === action.payload._id);
-      if (!exists) state.kitchenOrders.unshift(action.payload);
+      const existsInItems = state.items.some(o => o._id === order._id);
+      if (!existsInItems) state.items.unshift(order);
+
+      const existsInKitchen = state.kitchenOrders.some(o => o._id === order._id);
+      if (!existsInKitchen) state.kitchenOrders.unshift(order);
     },
     updateSocketOrder: (state, action) => {
-      const { _id, orderStatus } = action.payload;
-      /* update main list */
-      const idx = state.items.findIndex(o => o._id === _id);
-      if (idx !== -1) state.items[idx] = action.payload;
-      /* update kitchen queue */
-      const kidx = state.kitchenOrders.findIndex(o => o._id === _id);
-      if (kidx !== -1) {
-        if (['ready', 'completed', 'delivered', 'cancelled'].includes(orderStatus)) {
-          state.kitchenOrders.splice(kidx, 1);
+      const payload = action.payload;
+      // Support both full order objects and partial { _id, orderStatus }
+      const id = payload._id || payload.orderId;
+      const newStatus = payload.orderStatus || payload.status;
+
+      if (!id) return;
+
+      /* update main items list */
+      const idx = state.items.findIndex(o => o._id === id);
+      if (idx !== -1) {
+        if (payload._id && payload.orderType) {
+          // Full order object — replace entirely
+          state.items[idx] = payload;
         } else {
-          state.kitchenOrders[kidx] = action.payload;
+          // Partial — just update status
+          state.items[idx] = { ...state.items[idx], orderStatus: newStatus };
+        }
+      }
+
+      /* update kitchen queue */
+      const kidx = state.kitchenOrders.findIndex(o => o._id === id);
+      if (kidx !== -1) {
+        if (['ready', 'completed', 'delivered', 'cancelled'].includes(newStatus)) {
+          // Remove from active kitchen queue once done/cancelled
+          state.kitchenOrders.splice(kidx, 1);
+        } else if (payload._id && payload.orderType) {
+          state.kitchenOrders[kidx] = payload;
+        } else {
+          state.kitchenOrders[kidx] = { ...state.kitchenOrders[kidx], orderStatus: newStatus };
         }
       }
     },
@@ -120,7 +142,14 @@ const orderSlice = createSlice({
         const idx  = state.items.findIndex(o => o._id === _id);
         if (idx  !== -1) state.items[idx]  = action.payload;
         const kidx = state.kitchenOrders.findIndex(o => o._id === _id);
-        if (kidx !== -1) state.kitchenOrders[kidx] = action.payload;
+        if (kidx !== -1) {
+          const st = action.payload.orderStatus;
+          if (['ready', 'completed', 'delivered', 'cancelled'].includes(st)) {
+            state.kitchenOrders.splice(kidx, 1);
+          } else {
+            state.kitchenOrders[kidx] = action.payload;
+          }
+        }
       });
   },
 });

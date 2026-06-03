@@ -1,14 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchKitchenOrders, updateOrderStatus } from '../store/slices/orderSlice';
-import { formatTime } from '../utils/helpers';
 import toast from 'react-hot-toast';
 
 const STATUS_FLOW = {
-  received:  { next: 'confirmed',  label: 'Confirm',  color: 'var(--blue)' },
+  received:  { next: 'confirmed',  label: 'Confirm',      color: 'var(--blue)' },
   confirmed: { next: 'preparing',  label: 'Start Cooking', color: 'var(--orange)' },
-  preparing: { next: 'ready',      label: 'Mark Ready', color: 'var(--green)' },
-  ready:     { next: 'completed',  label: 'Complete',  color: 'var(--gold)' },
+  preparing: { next: 'ready',      label: 'Mark Ready',   color: 'var(--green)' },
+  ready:     { next: 'completed',  label: 'Complete',     color: 'var(--gold)' },
 };
 
 const STATUS_BADGE = {
@@ -43,12 +42,25 @@ export default function KitchenPage() {
   const { kitchenOrders, loading } = useSelector((s) => s.orders);
   const [filter, setFilter] = useState('all');
   const [updating, setUpdating] = useState(null);
+  const prevCountRef = useRef(kitchenOrders.length);
+  const [newBanner, setNewBanner] = useState(false);
 
+  // Initial fetch + periodic refresh every 15s (socket handles real-time; this is a safety net)
   useEffect(() => {
     dispatch(fetchKitchenOrders());
-    const interval = setInterval(() => dispatch(fetchKitchenOrders()), 30000);
+    const interval = setInterval(() => dispatch(fetchKitchenOrders()), 15000);
     return () => clearInterval(interval);
   }, [dispatch]);
+
+  // Detect when a new order arrives via socket (Redux state change)
+  useEffect(() => {
+    const prev = prevCountRef.current;
+    if (kitchenOrders.length > prev) {
+      setNewBanner(true);
+      setTimeout(() => setNewBanner(false), 5000);
+    }
+    prevCountRef.current = kitchenOrders.length;
+  }, [kitchenOrders.length]);
 
   const filtered = filter === 'all' ? kitchenOrders : kitchenOrders.filter(o => o.orderStatus === filter);
 
@@ -64,15 +76,35 @@ export default function KitchenPage() {
   };
 
   const counts = {
-    all: kitchenOrders.length,
-    received: kitchenOrders.filter(o => o.orderStatus === 'received').length,
+    all:       kitchenOrders.length,
+    received:  kitchenOrders.filter(o => o.orderStatus === 'received').length,
     confirmed: kitchenOrders.filter(o => o.orderStatus === 'confirmed').length,
     preparing: kitchenOrders.filter(o => o.orderStatus === 'preparing').length,
-    ready: kitchenOrders.filter(o => o.orderStatus === 'ready').length,
+    ready:     kitchenOrders.filter(o => o.orderStatus === 'ready').length,
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+      {/* ── New Order Banner (flash when socket order arrives) ── */}
+      {newBanner && (
+        <div style={{
+          padding: '14px 20px', borderRadius: '12px',
+          background: 'linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.08))',
+          border: '1px solid rgba(212,175,55,0.5)',
+          display: 'flex', alignItems: 'center', gap: '12px',
+          animation: 'pulse 0.5s ease',
+        }}>
+          <span style={{ fontSize: '26px' }}>🍽️</span>
+          <div>
+            <div style={{ fontWeight: '700', color: 'var(--gold)', fontSize: '15px' }}>New Order Just Arrived!</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>Check the queue below — a new order was just added.</div>
+          </div>
+          <button onClick={() => setNewBanner(false)}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '20px', cursor: 'pointer' }}>×</button>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
@@ -80,7 +112,7 @@ export default function KitchenPage() {
             Kitchen Display System
           </h1>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Live order queue — auto-refreshes every 30s
+            Live order queue — updates automatically via socket
           </p>
         </div>
         <button className="btn-outline-gold" onClick={() => dispatch(fetchKitchenOrders())} style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px' }}>
@@ -98,7 +130,15 @@ export default function KitchenPage() {
               borderColor: filter === tab ? 'transparent' : 'var(--border)',
               color: filter === tab ? '#0D0D0D' : 'var(--text-secondary)',
             }}>
-            {tab === 'all' ? 'All' : tab} {counts[tab] > 0 && <span style={{ marginLeft: '4px', background: filter === tab ? 'rgba(0,0,0,0.2)' : 'rgba(212,175,55,0.15)', padding: '0 5px', borderRadius: '999px', color: filter === tab ? '#0D0D0D' : 'var(--gold)' }}>{counts[tab]}</span>}
+            {tab === 'all' ? 'All' : tab}
+            {counts[tab] > 0 && (
+              <span style={{
+                marginLeft: '6px', background: filter === tab ? 'rgba(0,0,0,0.2)' : 'rgba(212,175,55,0.15)',
+                padding: '0 6px', borderRadius: '999px',
+                color: filter === tab ? '#0D0D0D' : 'var(--gold)',
+                fontWeight: '700',
+              }}>{counts[tab]}</span>
+            )}
           </button>
         ))}
       </div>
@@ -113,6 +153,9 @@ export default function KitchenPage() {
           <div style={{ fontSize: '48px', marginBottom: '12px' }}>👨‍🍳</div>
           <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
             {filter === 'all' ? 'No active orders in kitchen' : `No ${filter} orders`}
+          </p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
+            New orders will appear here automatically
           </p>
         </div>
       ) : (

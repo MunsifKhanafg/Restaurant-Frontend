@@ -51,9 +51,11 @@ export const useSocket = (userRole) => {
     });
 
     socket.on('newOrder', (order) => {
+      // Add to Redux kitchen orders list
       dispatch(addSocketOrder(order));
 
-      const isManager = ['admin', 'manager'].includes(userRole);
+      const isAdminOrManager = ['admin', 'manager'].includes(userRole);
+      const isKitchen = ['admin', 'manager', 'chef'].includes(userRole);
 
       // Build a rich description
       const typeLabel =
@@ -65,96 +67,141 @@ export const useSocket = (userRole) => {
 
       const itemCount = order.items?.reduce((s, i) => s + i.quantity, 0) || 0;
 
-      const message = isManager
+      const message = isAdminOrManager
         ? `🍽️ New Order — ${order.billId} | ${typeLabel} | ${itemCount} item(s)`
         : `🍽️ New Order — ${order.billId}`;
 
-      dispatch(addNotification({
-        type: 'order',
-        message,
-        orderId: order._id,
-        billId: order.billId,
-        orderType: order.orderType,
-        tableNumber: order.tableNumber,
-        customerName: order.customer?.name || '',
-        itemCount,
-        totalAmount: order.totalAmount,
-        paymentMethod: order.paymentMethod,
-      }));
+      // Add to notification bell for admin & manager
+      if (isAdminOrManager) {
+        dispatch(addNotification({
+          type: 'order',
+          message,
+          orderId: order._id,
+          billId: order.billId,
+          orderType: order.orderType,
+          tableNumber: order.tableNumber,
+          customerName: order.customer?.name || '',
+          itemCount,
+          totalAmount: order.totalAmount,
+          paymentMethod: order.paymentMethod,
+        }));
+      }
 
-      // Play sound for managers/admins and kitchen
-      if (isManager || userRole === 'chef') {
+      // Play sound for kitchen & admin/manager
+      if (isKitchen) {
         playNotificationSound();
       }
 
-      // Show toast
-      toast.custom(
-        (t) => (
-          <div
-            onClick={() => toast.dismiss(t.id)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '12px',
-              background: '#1A1A1A', border: '1px solid rgba(212,175,55,0.4)',
-              borderRadius: '12px', padding: '12px 16px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-              cursor: 'pointer', maxWidth: '380px', width: '100%',
-              animation: t.visible ? 'slideIn 0.3s ease' : 'slideOut 0.3s ease',
-            }}
-          >
-            <div style={{
-              width: '42px', height: '42px', borderRadius: '50%', flexShrink: 0,
-              background: 'linear-gradient(135deg,#D4AF37,#B8960C)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '20px',
-            }}>🍽️</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: '700', color: '#D4AF37', fontSize: '13px', marginBottom: '2px' }}>
-                New Order Received!
+      // Show a visible toast banner for kitchen & admin/manager
+      if (isKitchen) {
+        toast.custom(
+          (t) => (
+            <div
+              onClick={() => toast.dismiss(t.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '12px',
+                background: '#1A1A1A', border: '1px solid rgba(212,175,55,0.4)',
+                borderRadius: '12px', padding: '12px 16px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                cursor: 'pointer', maxWidth: '380px', width: '100%',
+                animation: t.visible ? 'slideIn 0.3s ease' : 'slideOut 0.3s ease',
+              }}
+            >
+              <div style={{
+                width: '42px', height: '42px', borderRadius: '50%', flexShrink: 0,
+                background: 'linear-gradient(135deg,#D4AF37,#B8960C)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '20px',
+              }}>🍽️</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: '700', color: '#D4AF37', fontSize: '13px', marginBottom: '2px' }}>
+                  🔔 New Order Received!
+                </div>
+                <div style={{ color: '#F5F0E8', fontSize: '12px', fontFamily: '"JetBrains Mono",monospace' }}>
+                  {order.billId}
+                </div>
+                <div style={{ color: '#888', fontSize: '11px', marginTop: '2px' }}>
+                  {typeLabel} • {itemCount} item(s)
+                  {order.paymentMethod ? ` • ${order.paymentMethod}` : ''}
+                </div>
               </div>
-              <div style={{ color: '#F5F0E8', fontSize: '12px', fontFamily: '"JetBrains Mono",monospace' }}>
-                {order.billId}
-              </div>
-              <div style={{ color: '#888', fontSize: '11px', marginTop: '2px' }}>
-                {typeLabel} • {itemCount} item(s)
-                {order.paymentMethod ? ` • ${order.paymentMethod}` : ''}
-              </div>
+              <div style={{
+                fontSize: '10px', background: 'rgba(212,175,55,0.15)', color: '#D4AF37',
+                padding: '3px 8px', borderRadius: '999px', fontWeight: '700',
+                border: '1px solid rgba(212,175,55,0.3)', whiteSpace: 'nowrap',
+              }}>NEW</div>
             </div>
-            <div style={{
-              fontSize: '10px', background: 'rgba(212,175,55,0.15)', color: '#D4AF37',
-              padding: '3px 8px', borderRadius: '999px', fontWeight: '700',
-              border: '1px solid rgba(212,175,55,0.3)', whiteSpace: 'nowrap',
-            }}>NEW</div>
-          </div>
-        ),
-        { duration: 6000, position: 'top-right' }
-      );
+          ),
+          { duration: 8000, position: 'top-right' }
+        );
+      }
     });
 
-    socket.on('orderUpdate', (order) => {
-      // Admin room: full order updates
-      if (['admin', 'manager'].includes(userRole)) {
-        dispatch(updateSocketOrder({ orderId: order._id, status: order.orderStatus }));
+    // Handle order updates — fix: server sends { orderId, status, order }
+    // but reducer expects the full order object (with _id + orderStatus)
+    socket.on('orderUpdate', (data) => {
+      if (data && data._id) {
+        // Full order object received
+        dispatch(updateSocketOrder(data));
+      } else if (data && data.order) {
+        // Nested full order
+        dispatch(updateSocketOrder(data.order));
       }
     });
 
     socket.on('orderStatusUpdate', (data) => {
-      dispatch(updateSocketOrder(data));
+      // data = { orderId, status, order }
+      if (data && data.order) {
+        // Use full order object for accurate state update
+        dispatch(updateSocketOrder(data.order));
+      } else if (data && data.orderId) {
+        // Fallback: partial update using correct field names
+        dispatch(updateSocketOrder({ _id: data.orderId, orderStatus: data.status }));
+      }
 
-      // Notify manager when order status changes
+      // Notify admin/manager when order status changes
       if (['admin', 'manager'].includes(userRole) && data.status) {
         const statusLabels = {
           confirmed: '✅ Order Confirmed',
           preparing: '👨‍🍳 Now Preparing',
-          ready: '🔔 Order Ready!',
+          ready: '🔔 Order Ready to Serve!',
           delivered: '🛵 Out for Delivery',
           completed: '🎉 Order Completed',
           cancelled: '❌ Order Cancelled',
         };
         if (statusLabels[data.status]) {
+          const shortId = data.orderId?.toString().slice(-6).toUpperCase() || '------';
           dispatch(addNotification({
             type: 'status',
-            message: `${statusLabels[data.status]} — Order #${data.orderId?.toString().slice(-6).toUpperCase()}`,
+            message: `${statusLabels[data.status]} — #${shortId}`,
           }));
+        }
+
+        // Show a toast for "ready" orders so kitchen & manager know immediately
+        if (data.status === 'ready') {
+          toast.custom(
+            (t) => (
+              <div
+                onClick={() => toast.dismiss(t.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '12px',
+                  background: '#1A1A1A', border: '1px solid rgba(76,175,125,0.5)',
+                  borderRadius: '12px', padding: '12px 16px',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                  cursor: 'pointer', maxWidth: '340px', width: '100%',
+                }}
+              >
+                <div style={{ fontSize: '28px' }}>🔔</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: '700', color: '#4CAF7D', fontSize: '13px' }}>Order Ready to Serve!</div>
+                  <div style={{ color: '#888', fontSize: '11px', marginTop: '2px' }}>
+                    #{data.orderId?.toString().slice(-6).toUpperCase()}
+                  </div>
+                </div>
+              </div>
+            ),
+            { duration: 6000, position: 'top-right' }
+          );
         }
       }
     });

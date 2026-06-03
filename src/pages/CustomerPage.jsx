@@ -31,6 +31,20 @@ import { useRestaurant } from '../hooks/useRestaurant';
 ──────────────────────────────────────────────────────────────── */
 const LS_KEY = 'aurum_my_orders';
 
+/* ── Customer profile ───────────────────────────────────────
+   Stored permanently so returning customers never re-enter details.
+   Only the customer can edit it (from WelcomeScreen).
+────────────────────────────────────────────────────── */
+const LS_PROFILE = 'aurum_customer_profile';
+function loadCustomerProfile() {
+  try { return JSON.parse(localStorage.getItem(LS_PROFILE) || 'null'); }
+  catch { return null; }
+}
+function saveCustomerProfile({ name, phone, address }) {
+  try { localStorage.setItem(LS_PROFILE, JSON.stringify({ name, phone, address })); }
+  catch {}
+}
+
 function loadSavedOrders() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); }
   catch { return []; }
@@ -149,11 +163,12 @@ const FRIENDLY_STATUS = (s, type) => ({
    SCREEN 1 — WELCOME
 ═══════════════════════════════════════════════════════════════ */
 function WelcomeScreen({ restaurantName, onStart, onMyOrders }) {
-  const [name,      setName]      = useState(sessionStorage.getItem('guestName') || '');
+  const savedProfile = loadCustomerProfile();
+  const [name,      setName]      = useState(savedProfile?.name  || sessionStorage.getItem('guestName') || '');
   const [orderType, setOType]     = useState('dine-in');
   const [tableNum,  setTableNum]  = useState('');
-  const [phone,     setPhone]     = useState('');
-  const [address,   setAddress]   = useState('');
+  const [phone,     setPhone]     = useState(savedProfile?.phone   || '');
+  const [address,   setAddress]   = useState(savedProfile?.address || '');
   const [error,     setError]     = useState('');
   const [checkingTable, setCheckingTable] = useState(false);
   const hasPastOrders = loadSavedOrders().length > 0;
@@ -180,12 +195,14 @@ function WelcomeScreen({ restaurantName, onStart, onMyOrders }) {
     }
 
     sessionStorage.setItem('guestName', name.trim());
+    saveCustomerProfile({ name: name.trim(), phone, address });
     onStart({ name: name.trim(), orderType, tableNum: Number(tableNum) || null, phone, address });
   };
 
   const handleWaitAndOrder = () => {
     setOccupiedModal(null);
     sessionStorage.setItem('guestName', name.trim());
+    saveCustomerProfile({ name: name.trim(), phone, address });
     onStart({ name: name.trim(), orderType, tableNum: Number(tableNum) || null, phone, address, tableIsOccupied: true });
   };
 
@@ -273,17 +290,22 @@ function WelcomeScreen({ restaurantName, onStart, onMyOrders }) {
         </div>
 
         {/* Name */}
-        <label style={{ display: 'block', fontSize: '11px', color: 'var(--gold)',
-                        fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em',
-                        marginBottom: '6px' }}>Your Name *</label>
-        <input
-          className="input-dark"
-          placeholder="Enter your name"
-          value={name}
-          onChange={e => { setName(e.target.value); setError(''); }}
-          style={{ width: '100%', padding: '12px 14px', borderRadius: '10px',
-                   fontSize: '15px', marginBottom: '16px' }}
-        />
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+            <label style={{ fontSize: '11px', color: 'var(--gold)',
+                            fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em' }}>Your Name *</label>
+            {savedProfile?.name && (
+              <span style={{ fontSize:'10px', color:'var(--text-muted)' }}>Remembered — edit below</span>
+            )}
+          </div>
+          <input
+            className="input-dark"
+            placeholder="Enter your name"
+            value={name}
+            onChange={e => { setName(e.target.value); setError(''); }}
+            style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', fontSize: '15px' }}
+          />
+        </div>
 
         {/* Order type */}
         <label style={{ display: 'block', fontSize: '11px', color: 'var(--gold)',

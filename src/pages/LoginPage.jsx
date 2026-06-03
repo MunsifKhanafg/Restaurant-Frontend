@@ -55,9 +55,8 @@ export default function LoginPage() {
     }
   };
 
-  // ── Customer quick-access — go directly, no name needed ──
+  // ── Customer quick-access — goes to /guest which shows the name picker ──
   const handleCustomerContinue = () => {
-    sessionStorage.removeItem('guestName'); // clear any old name
     navigate('/guest');
   };
 

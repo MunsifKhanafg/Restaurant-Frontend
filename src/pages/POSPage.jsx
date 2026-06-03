@@ -963,27 +963,170 @@ function MobileCartPanel({
 }
 
 /* ─────────────────────────────────────────────────
-   GUEST HEADER BAR
+   GUEST SESSION HELPERS
+   One persistent guest per device. Stored in localStorage
+   so name survives page refresh. Only one table at a time.
 ───────────────────────────────────────────────── */
-function GuestHeader({ guestName, restaurantName }) {
+const GUEST_LS_KEY   = 'restaurant_guest_session';   // { name, tableNumber, tableOccupiedAt }
+
+function loadGuestSession() {
+  try { return JSON.parse(localStorage.getItem(GUEST_LS_KEY) || 'null'); }
+  catch { return null; }
+}
+function saveGuestSession(session) {
+  try { localStorage.setItem(GUEST_LS_KEY, JSON.stringify(session)); } catch {}
+}
+function clearGuestSession() {
+  try { localStorage.removeItem(GUEST_LS_KEY); } catch {}
+}
+
+/* ─────────────────────────────────────────────────
+   GUEST NAME PICKER
+   Shows inline on the guest page — no redirect to login.
+   Persists name to localStorage so it survives refresh.
+───────────────────────────────────────────────── */
+function GuestNamePicker({ onConfirm, restaurantName }) {
+  const [name, setName] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    setTimeout(() => inputRef.current?.focus(), 120);
+  }, []);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onConfirm(trimmed);
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh', background: 'var(--bg-base)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '24px 16px',
+      backgroundImage:
+        'radial-gradient(ellipse at 20% 50%, rgba(212,175,55,0.06) 0%, transparent 60%), ' +
+        'radial-gradient(ellipse at 80% 20%, rgba(212,175,55,0.04) 0%, transparent 50%)',
+    }}>
+      <div style={{ width: '100%', maxWidth: '360px' }}>
+
+        {/* Logo / Restaurant name */}
+        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+          <div style={{ fontSize: '52px', marginBottom: '10px' }}>🍽️</div>
+          <h1 style={{
+            fontFamily: '"Cormorant Garamond", serif', fontSize: '26px', fontWeight: 700,
+            backgroundImage: 'linear-gradient(135deg, #E8C84A 0%, #D4AF37 50%, #B8960C 100%)',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text', marginBottom: '4px',
+          }}>
+            {restaurantName || 'Welcome'}
+          </h1>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            Customer Order
+          </p>
+        </div>
+
+        {/* Name card */}
+        <div className="glass-card-elevated" style={{ padding: '28px 24px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>
+            What's your name?
+          </h2>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: 1.6 }}>
+            Enter your name once — we'll remember you for this session.
+            Tap "Change Guest" at the top to switch to a different person.
+          </p>
+
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <input
+              ref={inputRef}
+              className="input-dark"
+              placeholder="e.g. John, Ali, Sarah…"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              style={{ padding: '13px 14px', borderRadius: '10px', fontSize: '16px', width: '100%' }}
+              autoComplete="given-name"
+            />
+            <button
+              type="submit"
+              className="btn-gold"
+              disabled={!name.trim()}
+              style={{ padding: '14px', borderRadius: '10px', fontSize: '15px', fontWeight: 700,
+                       opacity: name.trim() ? 1 : 0.45 }}
+            >
+              Continue →
+            </button>
+          </form>
+        </div>
+
+        <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '20px' }}>
+          Your session will be saved — no need to re-enter your name on refresh.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────
+   GUEST HEADER BAR
+   Shows guest name, active table badge, and logout button.
+───────────────────────────────────────────────── */
+function GuestHeader({ guestName, restaurantName, activeTable, tableOccupiedAt, onSwitchCustomer }) {
+  // Live "occupied since" clock
+  const [elapsed, setElapsed] = React.useState('');
+  React.useEffect(() => {
+    if (!tableOccupiedAt) { setElapsed(''); return; }
+    const tick = () => {
+      const diffMs = Date.now() - new Date(tableOccupiedAt).getTime();
+      const totalSecs = Math.floor(diffMs / 1000);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const s = totalSecs % 60;
+      setElapsed(h > 0
+        ? `${h}h ${String(m).padStart(2,'0')}m`
+        : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [tableOccupiedAt]);
+
   return (
     <div style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)',
-                  padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  position: 'sticky', top: 0, zIndex: 50 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(212,175,55,0.15)',
+                  padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  position: 'sticky', top: 0, zIndex: 50, gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+        <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(212,175,55,0.15)',
                       border: '1px solid rgba(212,175,55,0.3)', display: 'flex', alignItems: 'center',
-                      justifyContent: 'center', fontSize: '18px' }}>
-          👤
-        </div>
-        <div>
-          <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
-            {guestName || 'Guest'}
+                      justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>👤</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2,
+                        display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '110px' }}>
+              {guestName || 'Guest'}
+            </span>
+            {activeTable && (
+              <span style={{ fontSize: '10px', background: 'rgba(212,175,55,0.18)', color: 'var(--gold)',
+                             border: '1px solid rgba(212,175,55,0.35)', borderRadius: '999px',
+                             padding: '1px 7px', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                🍽️ Table {activeTable}
+                {elapsed && (
+                  <span style={{ marginLeft: '4px', opacity: 0.8 }}>· ⏱ {elapsed}</span>
+                )}
+              </span>
+            )}
           </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Customer Order</div>
+          <button
+            onClick={onSwitchCustomer}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                     fontSize: '11px', color: '#EF4444', textDecoration: 'underline', lineHeight: 1.4 }}
+          >
+            🔄 Change Guest
+          </button>
         </div>
       </div>
-      <div style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '16px', color: 'var(--gold)' }}>
+      <div style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '15px', color: 'var(--gold)',
+                    flexShrink: 0 }}>
         {restaurantName || 'My Restaurant'}
       </div>
     </div>
@@ -1203,8 +1346,21 @@ export default function POSPage() {
   const authUser   = useSelector((s) => s.auth.user);
   const { name: restaurantName } = useRestaurant();
 
-  const isGuest  = !authUser;
-  const guestName = isGuest ? (sessionStorage.getItem('guestName') || 'Guest') : null;
+  const isGuest   = !authUser;
+
+  // ── Guest session: persisted in localStorage so name survives refresh ──
+  // One guest at a time per device. Includes activeTable so we can warn
+  // when the user tries to switch tables mid-session.
+  const [guestSession,   setGuestSession]   = useState(() => isGuest ? loadGuestSession() : null);
+  const guestName = guestSession?.name || '';
+
+  const [showNamePicker, setShowNamePicker] = useState(
+    isGuest && !loadGuestSession()
+  );
+
+  // Table-switch confirmation state
+  const [pendingTable,   setPendingTable]   = useState(null);  // table number user tapped
+  const [showTableConfirm, setShowTableConfirm] = useState(false);
 
   const [catFilter,    setCatFilter]    = useState('All');
   const [search,       setSearch]       = useState('');
@@ -1217,7 +1373,14 @@ export default function POSPage() {
   const [payDetails,   setPayDetails]   = useState({ referenceNumber: '', senderName: '' });
   const [appModal,     setAppModal]     = useState(null);
   const [confirmModal, setConfirmModal] = useState(false);
-  const [custForm,     setCustForm]     = useState({ name: '', phone: '', address: '', deliveryZone: '' });
+  // Delivery form — persisted within session so it survives multiple orders
+  const [custForm,     setCustForm]     = useState(() => {
+    if (!isGuest) return { name: '', phone: '', address: '', deliveryZone: '' };
+    try {
+      const saved = JSON.parse(localStorage.getItem('restaurant_delivery_form') || 'null');
+      return saved || { name: '', phone: '', address: '', deliveryZone: '' };
+    } catch { return { name: '', phone: '', address: '', deliveryZone: '' }; }
+  });
   const [isMobile,     setIsMobile]     = useState(window.innerWidth < 900);
   const [mobileTab,    setMobileTab]    = useState('menu');
   const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
@@ -1230,9 +1393,81 @@ export default function POSPage() {
 
   useEffect(() => {
     if (isGuest && guestName && guestName !== 'Guest') {
-      setCustForm(prev => ({ ...prev, name: guestName }));
+      setCustForm(prev => ({ ...prev, name: prev.name || guestName }));
     }
   }, [isGuest, guestName]);
+
+  // Persist delivery form to localStorage whenever it changes (guest only)
+  useEffect(() => {
+    if (isGuest) {
+      try { localStorage.setItem('restaurant_delivery_form', JSON.stringify(custForm)); } catch {}
+    }
+  }, [custForm, isGuest]);
+
+  // ── Sync redux cart tableNumber with active session table on mount ──
+  useEffect(() => {
+    if (isGuest && guestSession?.tableNumber) {
+      dispatch(setOrderType('dine-in'));
+      dispatch(setTableNumber(guestSession.tableNumber));
+    }
+  }, []); // eslint-disable-line
+
+  // ── Re-sync table whenever cart.tableNumber becomes null (e.g. after clearCart) ──
+  // This ensures the guest stays on their locked table after placing an order.
+  useEffect(() => {
+    if (isGuest && guestSession?.tableNumber && !cart.tableNumber) {
+      dispatch(setOrderType('dine-in'));
+      dispatch(setTableNumber(guestSession.tableNumber));
+    }
+  }, [cart.tableNumber]); // eslint-disable-line
+
+  // ── Called when name picker form is submitted ──
+  const handleConfirmName = (name) => {
+    const session = { name, tableNumber: null };
+    saveGuestSession(session);
+    setGuestSession(session);
+    setCustForm(prev => ({ ...prev, name }));
+    setShowNamePicker(false);
+  };
+
+  // ── Called when user selects a table ──
+  // If same table is tapped again, do nothing.
+  // If a different table is active, ask for confirmation.
+  const handleTableSelect = (newTable) => {
+    const currentTable = cart.tableNumber || guestSession?.tableNumber;
+    // Clicking the already-selected table → no-op
+    if (currentTable === newTable) return;
+    if (isGuest && currentTable && currentTable !== newTable) {
+      setPendingTable(newTable);
+      setShowTableConfirm(true);
+    } else {
+      applyTableChange(newTable);
+    }
+  };
+
+  const applyTableChange = (tableNum) => {
+    dispatch(setTableNumber(tableNum));
+    if (isGuest) {
+      const now = new Date().toISOString();
+      const updated = { ...guestSession, tableNumber: tableNum, tableOccupiedAt: now };
+      saveGuestSession(updated);
+      setGuestSession(updated);
+    }
+    setPendingTable(null);
+    setShowTableConfirm(false);
+  };
+
+  // ── Switch to a different customer (clear session + show picker) ──
+  const handleSwitchCustomer = () => {
+    dispatch(clearCart());
+    setBreadCount(0);
+    setPayDetails({ referenceNumber: '', senderName: '' });
+    clearGuestSession();
+    setGuestSession(null);
+    setCustForm({ name: '', phone: '', address: '', deliveryZone: '' });
+    setMobileTab('menu');
+    setShowNamePicker(true);
+  };
 
   const closeModal   = () => setAppModal(null);
   const showAppModal = (type, title, message, onConfirm) =>
@@ -1299,10 +1534,28 @@ export default function POSPage() {
     if (createOrder.fulfilled.match(result)) {
       dispatch(clearCart());
       setBreadCount(0);
-      setPayDetails({ referenceNumber: '', senderName: '' });
+      // Re-apply the table immediately so the guest's next order is pre-filled
+      if (isGuest && result.payload.tableNumber) {
+        setTimeout(() => {
+          dispatch(setOrderType('dine-in'));
+          dispatch(setTableNumber(result.payload.tableNumber));
+        }, 0);
+      }
+      // Keep payDetails for next order unless it's an online payment
+      if (!['jazzcash','easypaisa','bankaccount'].includes(payMethod)) {
+        setPayDetails({ referenceNumber: '', senderName: '' });
+      }
       setOrdersRefreshKey(k => k + 1);
       toast.success(`✅ Order ${result.payload.billId} placed!`);
       if (isGuest) {
+        // Persist the table used for this order in the guest session
+        if (result.payload.tableNumber) {
+          const now = guestSession?.tableOccupiedAt || new Date().toISOString();
+          const updated = { ...guestSession, tableNumber: result.payload.tableNumber, tableOccupiedAt: now };
+          saveGuestSession(updated);
+          setGuestSession(updated);
+        }
+        // Keep custForm (delivery details) so next order doesn't need re-entry
         // Guest: go directly to Orders tab — they'll see their order with full details
         setMobileTab('orders');
       } else {
@@ -1329,7 +1582,18 @@ export default function POSPage() {
         overflowY: 'auto', WebkitOverflowScrolling: 'touch',
       } : {}),
     }}>
-      {isGuest && <GuestHeader guestName={guestName} restaurantName={restaurantName} />}
+      {/* Show inline name picker when guest has no name yet */}
+      {isGuest && showNamePicker && (
+        <GuestNamePicker
+          onConfirm={handleConfirmName}
+          restaurantName={restaurantName}
+        />
+      )}
+
+      {/* Main app — only shown once name is set */}
+      {(!isGuest || !showNamePicker) && (
+        <>
+      {isGuest && <GuestHeader guestName={guestName} restaurantName={restaurantName} activeTable={guestSession?.tableNumber} tableOccupiedAt={guestSession?.tableOccupiedAt} onSwitchCustomer={handleSwitchCustomer} />}
 
       <div style={{ padding: isGuest ? '0 0 80px' : '0' }}>
 
@@ -1380,12 +1644,28 @@ export default function POSPage() {
                     <option value="delivery">🛵 Delivery</option>
                   </select>
                   {cart.orderType === 'dine-in' && (
-                    <select className="select-dark" value={cart.tableNumber || ''}
-                      onChange={e => dispatch(setTableNumber(Number(e.target.value)))}
-                      style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '14px' }}>
-                      <option value="">Table #</option>
-                      {TABLES.map(t => <option key={t} value={t}>Table {t}</option>)}
-                    </select>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {isGuest && guestSession?.tableNumber && (
+                        <div style={{
+                          fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '6px',
+                          background: 'rgba(212,175,55,0.15)', color: 'var(--gold)',
+                          border: '1px solid rgba(212,175,55,0.4)',
+                          display: 'flex', alignItems: 'center', gap: '5px',
+                        }}>
+                          🔒 Locked: Table {guestSession.tableNumber}
+                        </div>
+                      )}
+                      <select className="select-dark" value={cart.tableNumber || ''}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          if (val) handleTableSelect(val);
+                          else dispatch(setTableNumber(null));
+                        }}
+                        style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '14px' }}>
+                        <option value="">Table #</option>
+                        {TABLES.map(t => <option key={t} value={t}>Table {t}</option>)}
+                      </select>
+                    </div>
                   )}
                 </div>
 
@@ -1513,12 +1793,28 @@ export default function POSPage() {
                     <option value="delivery">🛵 Delivery</option>
                   </select>
                   {cart.orderType === 'dine-in' && (
-                    <select className="select-dark" value={cart.tableNumber || ''}
-                      onChange={e => dispatch(setTableNumber(Number(e.target.value)))}
-                      style={{ padding: '8px 12px', borderRadius: '8px', fontSize: '13px' }}>
-                      <option value="">Table #</option>
-                      {TABLES.map(t => <option key={t} value={t}>Table {t}</option>)}
-                    </select>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {isGuest && guestSession?.tableNumber && (
+                        <div style={{
+                          fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '5px',
+                          background: 'rgba(212,175,55,0.15)', color: 'var(--gold)',
+                          border: '1px solid rgba(212,175,55,0.4)',
+                          display: 'flex', alignItems: 'center', gap: '4px',
+                        }}>
+                          🔒 Table {guestSession.tableNumber} (locked)
+                        </div>
+                      )}
+                      <select className="select-dark" value={cart.tableNumber || ''}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          if (val) handleTableSelect(val);
+                          else dispatch(setTableNumber(null));
+                        }}
+                        style={{ padding: '8px 12px', borderRadius: '8px', fontSize: '13px' }}>
+                        <option value="">Table #</option>
+                        {TABLES.map(t => <option key={t} value={t}>Table {t}</option>)}
+                      </select>
+                    </div>
                   )}
                 </div>
 
@@ -1739,6 +2035,73 @@ export default function POSPage() {
         )}
       </div>
 
+      {/* ── TABLE SWITCH CONFIRMATION MODAL ── */}
+      {showTableConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 600,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="glass-card-elevated" style={{ width: '100%', maxWidth: '380px', padding: '28px' }}>
+
+            {/* Header */}
+            <div style={{ textAlign: 'center', marginBottom: '18px' }}>
+              <div style={{ fontSize: '44px', marginBottom: '8px' }}>🍽️</div>
+              <h2 style={{ fontFamily: '"Cormorant Garamond",serif', fontSize: '22px',
+                           color: 'var(--gold)', marginBottom: '6px' }}>
+                Change Table?
+              </h2>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                You already have a session at this table
+              </p>
+            </div>
+
+            {/* Table comparison */}
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+              <div style={{ flex: 1, padding: '12px', borderRadius: '10px', textAlign: 'center',
+                            background: 'rgba(212,175,55,0.12)', border: '2px solid rgba(212,175,55,0.5)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '4px' }}>🔒</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>Current (Locked)</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--gold)' }}>Table {guestSession?.tableNumber}</div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '3px' }}>Your active session</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', color: 'var(--text-muted)', fontSize: '20px' }}>→</div>
+              <div style={{ flex: 1, padding: '12px', borderRadius: '10px', textAlign: 'center',
+                            background: 'rgba(239,68,68,0.07)', border: '2px solid rgba(239,68,68,0.3)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '4px' }}>🆕</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>Requesting</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#EF4444' }}>Table {pendingTable}</div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '3px' }}>New session</div>
+              </div>
+            </div>
+
+            {/* Warning */}
+            <div style={{ padding: '11px 13px', borderRadius: '9px', marginBottom: '18px',
+                          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                          fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              ⚠️ <strong style={{ color: '#EF4444' }}>Are you sure?</strong> Switching to Table {pendingTable}
+              will start a <strong>new session</strong>. Your order history for Table {guestSession?.tableNumber} stays
+              in the Orders tab — but your current table lock changes.
+              <br /><br />
+              If you just want to <strong>add more items to Table {guestSession?.tableNumber}</strong>, tap
+              <strong> Stay on Table {guestSession?.tableNumber}</strong> below.
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button className="btn-gold"
+                onClick={() => { setPendingTable(null); setShowTableConfirm(false); }}
+                style={{ flex: 2, padding: '13px', borderRadius: '9px', fontSize: '13px', fontWeight: 700 }}>
+                🍽️ Stay on Table {guestSession?.tableNumber}
+              </button>
+              <button
+                onClick={() => applyTableChange(pendingTable)}
+                style={{ flex: 1, padding: '13px', borderRadius: '9px', fontSize: '12px', fontWeight: 600,
+                         cursor: 'pointer', border: '1px solid rgba(239,68,68,0.4)',
+                         background: 'rgba(239,68,68,0.1)', color: '#EF4444' }}>
+                Switch to {pendingTable}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── MODALS ── */}
       <AppModal modal={appModal} onClose={closeModal} />
 
@@ -1814,6 +2177,8 @@ export default function POSPage() {
           onClose={() => setShowBill(null)}
           onViewOrders={() => setShowBill(null)}
         />
+      )}
+        </>
       )}
     </div>
   );
